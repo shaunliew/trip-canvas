@@ -1,118 +1,126 @@
 {
   "source": "live",
   "selected_base": {
-    "id": "base_namba_dotonbori",
-    "name": "Namba / Dotonbori",
-    "score": 95,
+    "id": "shiodome",
+    "name": "Shiodome / Shimbashi",
+    "score": 92,
     "center": {
-      "lat": 34.6685,
-      "lng": 135.5026
+      "lat": 35.6655,
+      "lng": 139.7585
     },
-    "transit_summary": "Best all-around base: walkable to Object Osaka and Dotonbori, quick subway/walk access to Shinsekai and Tsutenkaku, and straightforward northbound access toward Katsuo-ji via the Midosuji corridor. Namba is also a major interchange with Osaka Metro, Nankai, Kintetsu, Hanshin, and airport access, which fits arrival from Singapore via Kansai International Airport.",
-    "rationale": "This is the strongest fit for a short 2026-06-10 to 2026-06-13 Osaka stay because most saved places cluster around Minami: Object Osaka and Dotonbori are walkable, Shinsekai/Tsutenkaku are easy by subway or a longer walk, and the area is dense with late-night food, ramen, convenience stores, and shopping. Namba is repeatedly described as Osaka’s central entertainment/transit core and a natural first-timer base, with Nankai airport access and multiple subway/rail lines. ([explore.osaka](https://explore.osaka/neighborhood/dotonbori/?utm_source=openai))",
+    "transit_summary": "Central, covered-walkway base with direct Narita access via the Yamanote/JR Shimbashi hub and Toei Oedo/Asakusa lines; walkable to Ginza and Hamarikyu, and an easy hop to Roppongi (Grand Hyatt) and Akasaka (Harry Potter Cafe). Underground concourses make rainy arrival days painless.",
+    "rationale": "Best fit for this Tokyo place list: Shiodome sits between Ginza and the bay, gives a one-seat-ish ride to Narita for the Scoot arrival, and keeps the saved Roppongi/Akasaka/Ariake stops within a short ride. Dense convenience-store and dining access supports late-night ramen and walking-friendly evenings.",
     "tradeoffs": [
-      "Busy and touristy at night, especially around Dotonbori canal and Ebisubashi.",
-      "Hotel rooms can be smaller and rates can run higher than Tennoji or Shinsekai, but the time savings are worth it for this place list.",
-      "For Katsuo-ji, you will still need a northbound transit leg and onward bus/taxi; no central Osaka base makes that temple truly close."
+      "Business-district quiet at night versus livelier Shinjuku or Shibuya.",
+      "Tokyo Dream Park in Ariake still needs a Yurikamome/transit leg.",
+      "Central rates run above outer-ward value hotels."
     ]
   },
   "base_areas": [
     {
-      "id": "base_namba_dotonbori",
-      "name": "Namba / Dotonbori",
-      "score": 95,
+      "id": "shiodome",
+      "name": "Shiodome / Shimbashi",
+      "score": 92,
       "center": {
-        "lat": 34.6685,
-        "lng": 135.5026
+        "lat": 35.6655,
+        "lng": 139.7585
       },
-      "transit_summary": "Best all-around base: walkable to Object Osaka and Dotonbori, quick subway/walk access to Shinsekai and Tsutenkaku, and straightforward northbound access toward Katsuo-ji via the Midosuji corridor. Namba is also a major interchange with Osaka Metro, Nankai, Kintetsu, Hanshin, and airport access, which fits arrival from Singapore via Kansai International Airport.",
-      "rationale": "This is the strongest fit for a short 2026-06-10 to 2026-06-13 Osaka stay because most saved places cluster around Minami: Object Osaka and Dotonbori are walkable, Shinsekai/Tsutenkaku are easy by subway or a longer walk, and the area is dense with late-night food, ramen, convenience stores, and shopping. Namba is repeatedly described as Osaka’s central entertainment/transit core and a natural first-timer base, with Nankai airport access and multiple subway/rail lines. ([explore.osaka](https://explore.osaka/neighborhood/dotonbori/?utm_source=openai))",
+      "transit_summary": "Central, covered-walkway base with direct Narita access via the Shimbashi hub; walkable to Ginza, easy to Roppongi and the Ariake bayfront.",
+      "rationale": "Strongest all-around base for the Tokyo cluster: airport access, Ginza walkability, and short rides to the saved Roppongi/Akasaka/Ariake spots.",
       "tradeoffs": [
-        "Busy and touristy at night, especially around Dotonbori canal and Ebisubashi.",
-        "Hotel rooms can be smaller and rates can run higher than Tennoji or Shinsekai, but the time savings are worth it for this place list.",
-        "For Katsuo-ji, you will still need a northbound transit leg and onward bus/taxi; no central Osaka base makes that temple truly close."
+        "Quieter nightlife than Shinjuku/Shibuya.",
+        "Ariake still needs a transit leg."
       ]
     },
     {
-      "id": "base_shinsaibashi_horie",
-      "name": "Shinsaibashi / Horie",
-      "score": 87,
+      "id": "ginza",
+      "name": "Ginza",
+      "score": 86,
       "center": {
-        "lat": 34.6746,
-        "lng": 135.4998
+        "lat": 35.6717,
+        "lng": 139.7650
       },
-      "transit_summary": "Very close to Object Osaka and Dotonbori, with Shinsaibashi and Namba access; good for walking between cafés, shopping streets, and Minami nightlife.",
-      "rationale": "A slightly calmer and more design/shopping-oriented alternative next to the main cluster. It keeps Object Osaka and Dotonbori very close while still providing subway access and plenty of food. It is a good fit if the traveler wants walkability with a less chaotic sleep base than directly inside Dotonbori.",
+      "transit_summary": "Premium shopping/dining district one stop from Shimbashi, with broad subway coverage toward Akasaka and Roppongi.",
+      "rationale": "A polished, very walkable alternative immediately north of Shiodome that keeps the same airport and cross-city access while adding flagship dining.",
       "tradeoffs": [
-        "Slightly less convenient than Namba for Nankai airport trains and some transfers.",
-        "Still busy near Shinsaibashi-suji.",
-        "Hotel value can be mixed because the area is popular."
+        "Higher hotel rates on average.",
+        "Less late-night casual food than Shimbashi."
       ]
     },
     {
-      "id": "base_tennoji_abeno",
-      "name": "Tennoji / Abeno",
-      "score": 82,
+      "id": "shinjuku",
+      "name": "Shinjuku",
+      "score": 80,
       "center": {
-        "lat": 34.6463,
-        "lng": 135.5133
+        "lat": 35.6896,
+        "lng": 139.7006
       },
-      "transit_summary": "Excellent for Shinsekai and Tsutenkaku; one subway/rail hop to Namba/Dotonbori; generally good value and practical station access.",
-      "rationale": "Strong value pick if lower hotel cost matters more than being in Dotonbori every night. Tennoji is close to Shinsekai/Tsutenkaku and has a major station, malls, food, and convenience access, while Namba remains a short ride away. ([explore.osaka](https://explore.osaka/neighborhood/shinsekai/?utm_source=openai))",
+      "transit_summary": "Major interchange with huge dining/nightlife density and strong rail, but farther from the bayfront Ariake stop.",
+      "rationale": "Great value-and-energy base if nightlife matters more than proximity to the saved eastern/bayfront places.",
       "tradeoffs": [
-        "Object Osaka and Dotonbori are not as walkable as from Namba/Shinsaibashi.",
-        "Less iconic late-night canal atmosphere.",
-        "Katsuo-ji access still requires crossing north through central Osaka."
+        "Longer rides to Ariake and Shiodome.",
+        "Busier and more crowded at peak times."
       ]
     },
     {
-      "id": "base_umeda_osaka_station",
-      "name": "Umeda / Osaka Station",
-      "score": 76,
+      "id": "roppongi",
+      "name": "Roppongi",
+      "score": 78,
       "center": {
-        "lat": 34.7025,
-        "lng": 135.4959
+        "lat": 35.6628,
+        "lng": 139.7314
       },
-      "transit_summary": "Excellent regional rail hub and useful for heading north, but farther from the Minami places that dominate this itinerary.",
-      "rationale": "A practical station-first base with strong rail connections and easier positioning for the northbound Katsuo-ji day than southern Osaka. However, the Reels-grounded places are mostly in Minami, so the traveler would spend more time commuting back to Dotonbori, Object Osaka, Shinsekai, and Tsutenkaku.",
+      "transit_summary": "Close to Grand Hyatt and Akasaka, with Hibiya/Oedo line access, but a longer reach to the bay and Narita.",
+      "rationale": "Convenient if the trip centers on the Roppongi/Akasaka saved spots, at the cost of a longer airport and Ariake connection.",
       "tradeoffs": [
-        "Less efficient for the main saved Osaka nightlife/food cluster.",
-        "Not as atmospheric for Dotonbori ramen and late-night wandering.",
-        "Often business/upscale in feel, which may reduce perceived hotel value for this trip."
+        "Less direct Narita access than Shiodome.",
+        "Nightlife-heavy area can be noisy."
       ]
     }
   ],
   "hotel_candidates": [
     {
-      "id": "hotel_forza_osaka_namba_dotonbori",
-      "name": "Hotel Forza Osaka Namba Dotonbori",
-      "base_area_id": "base_namba_dotonbori",
-      "lat": null,
-      "lng": null,
-      "price_summary": "Mid-range/value-oriented. Official site positions it directly in Dotonbori, with breakfast available for an added charge; live room rates for 2026-06-10 to 2026-06-13 should be checked on the official booking page before purchase.",
-      "booking_url": "https://www.hotelforza.jp/osakanamba/en/",
-      "rationale": "Best value-leaning pick for this itinerary: the official hotel page states it is in the center of Dotonbori, 2 minutes from the Glico Sign, 6 minutes from Namba Station Exit 14, about 15 minutes by subway from Shin-Osaka, and about 40 minutes by Nankai Railway from Kansai International Airport to Namba. That makes it ideal for Dotonbori ramen, late-night food, and the shortest practical travel to the Minami places. ([hotelforza.jp](https://www.hotelforza.jp/osakanamba/en/?utm_source=openai))",
+      "id": "hotel_royal_park_shiodome",
+      "name": "The Royal Park Hotel Iconic Tokyo Shiodome",
+      "base_area_id": "shiodome",
+      "lat": 35.6655,
+      "lng": 139.7585,
+      "price_summary": "Mid-range to upper-mid. Direct-access Shiodome tower with strong rail links to Narita and walkable Ginza/Shimbashi.",
+      "booking_url": "https://www.booking.com/hotel/jp/royalpark-shiodometower.html?nad_placement=SR_MAIN",
+      "rationale": "Best pick: meets every requirement — central Shiodome base with covered station access (great for the rainy arrival days), walking-friendly to Ginza/Shimbashi dining, and an easy NRT transfer that fits the Scoot arrival.",
       "tradeoffs": [
-        "No onsen noted, so it does not satisfy the onsen preference directly.",
-        "Being inside Dotonbori is convenient but can mean crowds and noise in the surrounding streets.",
-        "Confirm the exact room type and cancellation policy because compact rooms are common in central Osaka."
+        "Not the cheapest option in the shortlist.",
+        "Shiodome is business-district quiet at night versus livelier Shinjuku/Shibuya."
       ]
     },
     {
-      "id": "hotel_cross_osaka",
-      "name": "Cross Hotel Osaka",
-      "base_area_id": "base_namba_dotonbori",
-      "lat": null,
-      "lng": null,
-      "price_summary": "Mid-range to upper-mid-range depending on demand. It is likely to cost more than simpler business hotels, but the location can justify the premium for a short stay focused on Dotonbori/Namba.",
-      "booking_url": "https://www.crosshotel.com/osaka/en",
-      "rationale": "Best comfort/location alternative in the same selected base: sources place Cross Hotel Osaka near Dotonbori and Shinsaibashi-suji, about 3–4 minutes from Namba subway access and close to Osaka-Namba and Shinsaibashi stations. This is excellent for station access, late-night dining, and walking to Object Osaka/Dotonbori while still being slightly more polished than many budget properties. ([osakastation.com](https://www.osakastation.com/cross-hotel-osaka/?utm_source=openai))",
+      "id": "hotel_park_hotel_tokyo_shiodome",
+      "name": "Park Hotel Tokyo (Shiodome)",
+      "base_area_id": "shiodome",
+      "lat": 35.6638,
+      "lng": 139.7596,
+      "price_summary": "Mid-range. Art-themed rooms in the Shiodome Media Tower, same walkable cluster.",
+      "booking_url": null,
+      "rationale": "Strong runner-up in the same base: similar Shiodome convenience and Ginza walkability at a slightly more design-forward, sometimes lower price point.",
       "tradeoffs": [
-        "Usually less of a pure value play than Hotel Forza.",
-        "No onsen feature identified in the current hotel information found.",
-        "Very central location means the surrounding area is lively and crowded late."
+        "Rooms can be smaller than the best pick.",
+        "Higher floors fill fast on popular dates."
+      ]
+    },
+    {
+      "id": "hotel_conrad_tokyo_shiodome",
+      "name": "Conrad Tokyo (Shiodome)",
+      "base_area_id": "shiodome",
+      "lat": 35.6628,
+      "lng": 139.7593,
+      "price_summary": "Luxury. Bayfront Shiodome tower with spa and skyline views.",
+      "booking_url": null,
+      "rationale": "Comfort/upgrade option in the same base for travelers willing to spend more: larger rooms, spa, and premium dining while keeping the identical Shiodome transit advantages.",
+      "tradeoffs": [
+        "Well above the mid-range budget for this trip.",
+        "Premium amenities are nice-to-have, not required by the stated preferences."
       ]
     }
   ],
-  "selected_hotel_id": "hotel_forza_osaka_namba_dotonbori"
+  "selected_hotel_id": "hotel_royal_park_shiodome"
 }

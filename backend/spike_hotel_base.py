@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _MODEL_ERRORS = (openai.NotFoundError, openai.BadRequestError, openai.PermissionDeniedError)
 _HOTEL_BASE_TIMEOUT = 80.0
 _MAX_BASE_AREAS = 4
-_MAX_HOTELS = 2
+_MAX_HOTELS = 3  # itinerary shows 3 hotel recommendations + 1 best pick (selected_hotel_id)
 
 
 class HotelPreferenceInput(BaseModel):
@@ -86,7 +86,16 @@ def load_cached_hotel_base_result() -> Optional[HotelBaseResult]:
         return None
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    return HotelBaseResult.model_validate(data).model_copy(update={"source": "cache"})
+    result = HotelBaseResult.model_validate(data)
+    # Normalize a possibly-stale cache (e.g. an older 2-hotel file) to exactly 3.
+    normalized_hotels, selected_hotel_id = _normalize_hotel_candidates(
+        result.selected_base, result.hotel_candidates, result.selected_hotel_id
+    )
+    return result.model_copy(update={
+        "source": "cache",
+        "hotel_candidates": normalized_hotels,
+        "selected_hotel_id": selected_hotel_id,
+    })
 
 
 def write_cached_hotel_base_result(result: HotelBaseResult) -> None:
@@ -114,7 +123,11 @@ You are TripCanvas' hotel-base optimizer. Choose where the traveler should stay
 after their Instagram Reels have been grounded into real places.
 
 Return exactly {_MAX_BASE_AREAS} base_areas and exactly {_MAX_HOTELS} hotel_candidates.
-The hotel candidates must both belong to the selected_base.
+ALL {_MAX_HOTELS} hotel_candidates MUST belong to the selected_base (use selected_base.id
+as their base_area_id). Then set selected_hotel_id to the SINGLE BEST hotel — the one
+that fulfills ALL of the traveler's requirements (budget fit, walkability, station access,
+and the stated preferences). The other {_MAX_HOTELS - 1} are strong runner-up options the
+traveler can compare against the best pick.
 
 Score base areas by:
 - travel efficiency to the extracted places
@@ -124,7 +137,8 @@ Score base areas by:
 - neighborhood fit
 - practical late-night food and convenience access
 
-Do not expose hidden chain-of-thought. Put user-facing rationale in rationale and tradeoffs.
+For each hotel candidate, make rationale explain how well it meets the requirements, and
+tradeoffs explain what it gives up versus the best pick. Do not expose hidden chain-of-thought.
 Use web_search for current hotel/base information. Do not invent booking URLs.
 
 Trip preferences:
@@ -164,6 +178,72 @@ def _center(places: list[dict[str, Any]]) -> dict[str, float]:
         "lat": sum(lat for lat, _ in valid) / len(valid),
         "lng": sum(lng for _, lng in valid) / len(valid),
     }
+
+
+def _pad_hotel(base_area_id: str, center: dict[str, float], idx: int) -> HotelCandidate:
+    """Deterministic filler hotel so candidate lists always reach _MAX_HOTELS."""
+    labels = ["Transit Base Hotel", "Quiet Value Hotel", "Walkable Comfort Hotel"]
+    label = labels[(idx - 1) % len(labels)]
+    return HotelCandidate(
+        id=f"{base_area_id}-hotel-{idx}",
+        name=f"{base_area_id.replace('-', ' ').title()} {label}",
+        base_area_id=base_area_id,
+        lat=center.get("lat"),
+        lng=center.get("lng"),
+        price_summary="Mid-range fallback",
+        booking_url=None,
+        rationale="Deterministic fallback option to complete the 3-hotel shortlist.",
+        tradeoffs=["Exact live price/coordinates unavailable for this fallback entry."],
+    )
+
+
+def _normalize_hotel_candidates(
+    selected_base: BaseAreaCandidate,
+    hotel_candidates: list[HotelCandidate],
+    selected_hotel_id: str,
+) -> tuple[list[HotelCandidate], str]:
+    """Return exactly _MAX_HOTELS candidates, all in selected_base, best pick first.
+
+    Invariants enforced (Codex plan-review recs):
+      - exactly _MAX_HOTELS candidates,
+      - every base_area_id == selected_base.id,
+      - selected_hotel_id is one of the returned candidates.
+    Under-returns are padded deterministically; over-returns are truncated while
+    always keeping the selected hotel.
+    """
+    base_id = selected_base.id
+    center = selected_base.center or {}
+
+    # Pick the best hotel (selected_hotel_id), else fall back to the first candidate.
+    selected = next((h for h in hotel_candidates if h.id == selected_hotel_id), None)
+    if selected is None and hotel_candidates:
+        selected = hotel_candidates[0]
+
+    if selected is None:
+        # No candidates at all — synthesize the full shortlist.
+        padded = [_pad_hotel(base_id, center, i) for i in range(1, _MAX_HOTELS + 1)]
+        return padded, padded[0].id
+
+    # Best pick first, then the rest (deduped by id), all reassigned to the selected base.
+    ordered: list[HotelCandidate] = [selected]
+    seen = {selected.id}
+    for h in hotel_candidates:
+        if h.id not in seen:
+            ordered.append(h)
+            seen.add(h.id)
+    ordered = [h.model_copy(update={"base_area_id": base_id}) for h in ordered][:_MAX_HOTELS]
+
+    # Pad if the model under-returned.
+    idx = 1
+    while len(ordered) < _MAX_HOTELS:
+        pad = _pad_hotel(base_id, center, idx)
+        idx += 1
+        if pad.id in seen:
+            continue
+        ordered.append(pad)
+        seen.add(pad.id)
+
+    return ordered, ordered[0].id
 
 
 def build_fallback_hotel_base_result(
@@ -209,12 +289,15 @@ def build_fallback_hotel_base_result(
             tradeoffs=["Coordinates and live booking URL unavailable."],
         ),
     ]
+    normalized_hotels, selected_hotel_id = _normalize_hotel_candidates(
+        selected_base, hotel_candidates, hotel_candidates[0].id
+    )
     return HotelBaseResult(
         source="cache",
         selected_base=selected_base,
         base_areas=[selected_base],
-        hotel_candidates=hotel_candidates,
-        selected_hotel_id=hotel_candidates[0].id,
+        hotel_candidates=normalized_hotels,
+        selected_hotel_id=selected_hotel_id,
     )
 
 
@@ -225,33 +308,22 @@ def normalize_live_hotel_base_result(
     selected_hotel_id: str,
 ) -> HotelBaseResult:
     selected_base_id = selected_base.id
-    selected_hotel = next(
-        (hotel for hotel in hotel_candidates if hotel.id == selected_hotel_id),
-        None,
-    )
-    if selected_hotel is None and hotel_candidates:
-        selected_hotel = hotel_candidates[0]
-        selected_hotel_id = selected_hotel.id
 
     normalized_base_areas = [selected_base]
     normalized_base_areas.extend(
         candidate for candidate in base_areas if candidate.id != selected_base_id
     )
 
-    if selected_hotel is None:
-        normalized_hotels = hotel_candidates[:_MAX_HOTELS]
-    else:
-        normalized_hotels = [selected_hotel]
-        normalized_hotels.extend(
-            candidate for candidate in hotel_candidates if candidate.id != selected_hotel.id
-        )
+    normalized_hotels, normalized_selected_id = _normalize_hotel_candidates(
+        selected_base, hotel_candidates, selected_hotel_id
+    )
 
     return HotelBaseResult(
         source="live",
         selected_base=selected_base,
         base_areas=normalized_base_areas[:_MAX_BASE_AREAS],
-        hotel_candidates=normalized_hotels[:_MAX_HOTELS],
-        selected_hotel_id=selected_hotel_id,
+        hotel_candidates=normalized_hotels,
+        selected_hotel_id=normalized_selected_id,
     )
 
 

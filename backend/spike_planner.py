@@ -156,6 +156,24 @@ class WeatherAdjustment(BaseModel):
     weather_summary: str
 
 
+class HotelOption(BaseModel):
+    """One of the 3 hotel recommendations surfaced into the itinerary.
+
+    Mirrors a spike_hotel_base.HotelCandidate; exactly one option has is_best=True
+    (the selected_hotel_id / recommended_hotel). All optional/defaulted so a cached
+    itinerary without hotel_options still validates.
+    """
+
+    id: str = ""
+    name: str
+    base_area_id: str = ""
+    price_summary: str = ""
+    booking_url: Optional[str] = None
+    rationale: str = ""
+    tradeoffs: list[str] = Field(default_factory=list)
+    is_best: bool = False
+
+
 class ItineraryOutput(BaseModel):
     """narrator_agent output — final structured itinerary."""
 
@@ -168,9 +186,10 @@ class ItineraryOutput(BaseModel):
     recommended_flight: str = ""       # injected by pipeline — single flight description
     flight_booking_url: Optional[str] = None  # injected from EnrichedContext; direct airline booking page
     places: list[PlaceInfo] = Field(default_factory=list)  # per-attraction enriched info + URL; frontend joins by name
+    hotel_options: list[HotelOption] = Field(default_factory=list)  # 3 hotel recs (one is_best); from hotel_base. [] = none provided
     weather_report: Optional[WeatherReport] = None  # injected from weather_agent (Open-Meteo); None = unavailable
     weather_adjustments: list[WeatherAdjustment] = Field(default_factory=list)
-    bookings: Optional[BookingResult] = None         # injected from booking_agent (Duffel + deep links); None = unavailable
+    bookings: Optional[BookingResult] = None         # injected from booking_agent (deep links + AP2/x402 settlement); None = unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +520,40 @@ def _authoritative_hotel_choice(
     )
 
 
+def _build_hotel_options(hotel_base: Optional[dict]) -> list[HotelOption]:
+    """Map hotel_base candidates → 3 HotelOptions, flagging the selected best pick.
+
+    Returns [] when no hotel_base is provided. Guarantees at most one is_best;
+    if the selected_hotel_id matches none, the first option is flagged best so the
+    UI always has a highlight.
+    """
+    if not hotel_base:
+        return []
+    candidates = hotel_base.get("hotel_candidates") or []
+    selected_id = str(hotel_base.get("selected_hotel_id") or "").strip()
+    options: list[HotelOption] = []
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        name = str(cand.get("name") or "").strip()
+        if not name:
+            continue
+        raw_url = cand.get("booking_url")
+        options.append(HotelOption(
+            id=str(cand.get("id") or ""),
+            name=name,
+            base_area_id=str(cand.get("base_area_id") or ""),
+            price_summary=str(cand.get("price_summary") or ""),
+            booking_url=_clean_place_url(raw_url if isinstance(raw_url, str) else None),
+            rationale=str(cand.get("rationale") or ""),
+            tradeoffs=[t for t in (cand.get("tradeoffs") or []) if isinstance(t, str)],
+            is_best=(bool(selected_id) and str(cand.get("id") or "") == selected_id),
+        ))
+    if options and not any(o.is_best for o in options):
+        options[0] = options[0].model_copy(update={"is_best": True})
+    return options
+
+
 def _format_hotel_base_for_narrator(hotel_base: Optional[dict]) -> str:
     if not hotel_base:
         return "No hotel-base optimizer result was provided. Choose one hotel using the existing hotel rule."
@@ -661,13 +714,14 @@ async def _run_planner_inner(
                 url = _clean_place_url(ep.source_url)
         out_places.append(pi.model_copy(update={"source_url": url}))
 
-    # Inject hotel/flight picks, direct booking URLs, per-attraction URLs, weather, bookings.
+    # Inject hotel/flight picks, 3 hotel options, direct booking URLs, per-attraction URLs, weather, bookings.
     return output.model_copy(update={
         "recommended_hotel": trip_hotel,
         "hotel_booking_url": trip_hotel_url,
         "recommended_flight": enriched.recommended_flight,
         "flight_booking_url": flight_url,
         "places": out_places,
+        "hotel_options": _build_hotel_options(hotel_base),
         "weather_report": weather_report,
         "bookings": booking_result,
     })

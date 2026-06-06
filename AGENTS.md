@@ -9,18 +9,34 @@ TripCanvas is an AI-native travel planner. The main demo flow stays aligned with
 
 1. User provides 3-4 Instagram Reel URLs, travel dates, and free-text
    preferences.
-2. Backend agents extract real places, research them live, and assemble a
-   day-by-day itinerary.
-3. Frontend renders the trip from backend or sample data.
+2. Backend agents extract real places, research them live, recommend 3 hotels
+   (with one best pick), assemble a day-by-day itinerary, and run an agentic
+   payment (AP2 + x402) over mock bookings.
+3. Frontend renders the trip on a **Mapbox 3D map** from backend or sample data.
 4. Selecting a place, especially a hotel, should expose a streaming AI agent
    recommendation panel.
 
-The frontend direction has changed: TripCanvas should use Mapbox as the primary
-UI/UX surface, not a pop-up book. Treat `CLAUDE.md` references to the pop-up
-book, `react-pageflip`, and Google Maps as stale frontend direction unless the
-user explicitly reaffirms them. Keep `CLAUDE.md` as the source of truth for the
-backend pipeline, data flow, SSE contract, cache fallback, demo guardrails, and
-agent orchestration.
+**Pivot (2026-06-06) — `CLAUDE.md` is now fully aligned with these and is the
+source of truth:**
+
+- **Surface:** a **Mapbox 3D / tilted map** is the primary UI/UX, NOT a pop-up
+  book / flipbook / `react-pageflip` / Google Maps. These are permanently
+  dropped — do not reintroduce them.
+- **Payments:** Duffel is deprecated. The agent performs a **real agentic
+  payment** via **AP2** (signed Intent/Cart mandates) **+ x402** (HTTP-402 →
+  `X-PAYMENT` → facilitator settles USDC), modeled behind a `PaymentProvider`
+  seam in `spike_booking.py`. The **booking/fulfillment stays mock**
+  (`is_mock=True`); the payment is the headline. **Ownership:** Zhi Hao owns the
+  real AP2/x402 provider; the default `MockSettlementProvider` ships this round.
+- **Hotels:** the itinerary shows **3 hotel recommendations + 1 best pick**
+  (`ItineraryOutput.hotel_options`, one with `is_best=true`; `recommended_hotel`
+  is the best pick).
+- **Round split:** the current code round is **backend-only**. The **3D-map
+  frontend revamp is a separate next round** (owned by Shaun). Do not start the
+  frontend rebuild until that round.
+
+Keep `CLAUDE.md` as the source of truth for the backend pipeline, data flow, SSE
+contract, cache fallback, demo guardrails, payment seam, and agent orchestration.
 
 ## Hackathon Positioning
 
