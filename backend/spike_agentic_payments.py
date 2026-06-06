@@ -6,7 +6,9 @@ small service boundary. It does not perform network calls or real settlement.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass
@@ -28,6 +30,13 @@ _DEFAULT_AGENT_PAYMENT_USD = Decimal("0.01")
 _DEFAULT_PAYER = "0xOrchestratorDemo"
 _DEFAULT_PAYEE = "0xHotelAgentDemo"
 _RECEIPT_NOTE = "Demo-safe mock booking. No real hotel reservation was created."
+_AP2_FORMAT = "tripcanvas-ap2-demo-jws"
+_AP2_VCT = "tripcanvas.ap2.hotel_booking.confirmation.1"
+_AP2_ALG = "HS256"
+_AP2_TYP = "JWT"
+_AP2_KID = "tripcanvas-demo-ap2-v1"
+_AP2_BUTTON_LABEL = "Confirm Hotel Booking"
+_AP2_CLOCK_SKEW_SECONDS = 60
 
 
 class AuditEvent(BaseModel):
@@ -39,6 +48,38 @@ class AuditEvent(BaseModel):
 class BookingError(BaseModel):
     code: str
     message: str
+
+
+class AP2UserConfirmation(BaseModel):
+    confirmed: bool = False
+    button_label: str = ""
+    trusted_surface: str = "tripcanvas-web"
+
+
+class AP2SignedMandate(BaseModel):
+    format: Literal["tripcanvas-ap2-demo-jws"] = _AP2_FORMAT
+    protected: str
+    payload: str
+    signature: str
+    payload_json: dict[str, Any]
+
+
+class AP2MandateSummary(BaseModel):
+    status: Literal["created", "verified", "rejected"]
+    mode: Literal["direct"] = "direct"
+    mandate_id: str
+    checkout_hash: str
+    confirmation_id: str
+    confirmed_at: datetime
+    issuer: str
+    signed_mandate: Optional[AP2SignedMandate] = None
+
+
+class AP2MandateResponse(BaseModel):
+    status: Literal["signed", "rejected"]
+    ap2: Optional[AP2MandateSummary] = None
+    preview: Optional[dict[str, Any]] = None
+    error: Optional[BookingError] = None
 
 
 class BookingMandate(BaseModel):
@@ -65,6 +106,11 @@ class HotelBookingRequest(BaseModel):
     hotel_base: Optional[dict[str, Any]] = None
     mandate: Optional[BookingMandate] = None
     idempotency_key: Optional[str] = None
+    ap2_signed_mandate: Optional[AP2SignedMandate] = None
+
+
+class AP2HotelBookingMandateRequest(HotelBookingRequest):
+    user_confirmation: AP2UserConfirmation = Field(default_factory=AP2UserConfirmation)
 
 
 class PaymentInstructions(BaseModel):
@@ -118,6 +164,7 @@ class HotelBookingReceipt(BaseModel):
     pricing: dict[str, Any]
     payment: PaymentReceipt
     mandate: dict[str, Any]
+    ap2: Optional[AP2MandateSummary] = None
     receipt_note: str = _RECEIPT_NOTE
 
 
@@ -127,6 +174,7 @@ class HotelBookingResponse(BaseModel):
     payment_required: Optional[PaymentInstructions] = None
     payment: Optional[PaymentReceipt] = None
     receipt: Optional[HotelBookingReceipt] = None
+    ap2: Optional[AP2MandateSummary] = None
     error: Optional[BookingError] = None
 
 
@@ -680,12 +728,25 @@ class AgenticHotelPaymentService:
         if first_attempt.status != "payment_required" or first_attempt.payment_required is None:
             return first_attempt
 
+        ap2_summary = None
+        prior_events = list(first_attempt.audit_events)
         try:
             normalized = self._normalize_request(request)
+            if _ap2_mode() == "demo_signed":
+                context = self._build_context(normalized)
+                ap2_summary = _verify_ap2_signed_mandate(
+                    normalized.ap2_signed_mandate,
+                    normalized,
+                    context,
+                    first_attempt.payment_required,
+                )
+                prior_events.append(_ap2_mandate_verified_event(ap2_summary))
             proof = self.payment_adapter.create_payment_proof(normalized, first_attempt.payment_required)
         except PaymentAdapterError as exc:
-            return _payment_failed(first_attempt.audit_events, exc)
+            return _payment_failed(prior_events, exc)
         except ConstraintViolation as exc:
+            if exc.code.startswith("ap2_"):
+                return _ap2_rejected(first_attempt.audit_events, exc)
             return _rejected(exc)
 
         retry = self.attempt_booking(normalized, payment_proof=proof)
@@ -695,18 +756,23 @@ class AgenticHotelPaymentService:
                 if event.type != "mandate_validated"
             ]
             return retry.model_copy(
-                update={"audit_events": [*first_attempt.audit_events, *failed_events]}
+                update={"audit_events": [*prior_events, *failed_events]}
             )
         if retry.status != "mock_confirmed":
             return retry
         payment_completed = _payment_completed_event(retry.payment)
+        receipt = retry.receipt
+        if receipt is not None and ap2_summary is not None:
+            receipt = receipt.model_copy(update={"ap2": ap2_summary})
         return retry.model_copy(
             update={
                 "audit_events": [
-                    *first_attempt.audit_events,
+                    *prior_events,
                     payment_completed,
                     AuditEvent(type="booking_confirmed", message="Mock hotel booking receipt issued."),
-                ]
+                ],
+                "ap2": ap2_summary,
+                "receipt": receipt,
             }
         )
 
@@ -796,6 +862,421 @@ class AgenticHotelPaymentService:
         )
 
 
+def create_ap2_hotel_booking_mandate(
+    request: AP2HotelBookingMandateRequest | HotelBookingRequest | dict[str, Any],
+    user_confirmation: Optional[AP2UserConfirmation | dict[str, Any]] = None,
+) -> AP2MandateResponse:
+    try:
+        normalized_request = _normalize_ap2_mandate_request(request, user_confirmation)
+        confirmation = normalized_request.user_confirmation
+        if confirmation.confirmed is not True or confirmation.button_label != _AP2_BUTTON_LABEL:
+            raise ConstraintViolation(
+                "ap2_confirmation_required",
+                "User must confirm the hotel booking before an AP2 mandate can be signed.",
+            )
+
+        service = AgenticHotelPaymentService()
+        booking_request = service._normalize_request(normalized_request)
+        context = service._build_context(booking_request)
+        instructions = _payment_instructions(context)
+        payload = _build_ap2_payload(booking_request, context, instructions, confirmation)
+        signed_mandate = _sign_ap2_payload(payload)
+        summary = _ap2_summary_from_payload(payload, "created", signed_mandate=signed_mandate)
+        return AP2MandateResponse(
+            status="signed",
+            ap2=summary,
+            preview=_ap2_preview(context, instructions),
+        )
+    except ConstraintViolation as exc:
+        return AP2MandateResponse(
+            status="rejected",
+            error=BookingError(code=exc.code, message=exc.message),
+        )
+
+
+def _normalize_ap2_mandate_request(
+    request: AP2HotelBookingMandateRequest | HotelBookingRequest | dict[str, Any],
+    user_confirmation: Optional[AP2UserConfirmation | dict[str, Any]],
+) -> AP2HotelBookingMandateRequest:
+    if isinstance(request, AP2HotelBookingMandateRequest):
+        return request
+    data = (
+        request.model_dump(mode="python")
+        if isinstance(request, HotelBookingRequest)
+        else dict(request)
+    )
+    if user_confirmation is not None:
+        data["user_confirmation"] = (
+            user_confirmation.model_dump(mode="python")
+            if isinstance(user_confirmation, AP2UserConfirmation)
+            else user_confirmation
+        )
+    return AP2HotelBookingMandateRequest.model_validate(data)
+
+
+def _build_ap2_payload(
+    request: HotelBookingRequest,
+    context: BookingContext,
+    instructions: PaymentInstructions,
+    confirmation: AP2UserConfirmation,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    iat = int(now.timestamp())
+    exp = iat + _ap2_mandate_ttl_seconds()
+    confirmed_at = _isoformat_z(now)
+    checkout = _ap2_checkout(context)
+    checkout_hash = _checkout_hash(checkout)
+    checkout["checkout_hash"] = checkout_hash
+    confirmation_id = _short_id(
+        "ap2_confirm",
+        request.trip_id,
+        context.mandate.mandate_id,
+        context.idempotency_key,
+        confirmed_at,
+    )
+    return {
+        "vct": _AP2_VCT,
+        "mode": "direct",
+        "issuer": _ap2_issuer(),
+        "audience": _ap2_audience(),
+        "mandate_id": context.mandate.mandate_id,
+        "trip_id": request.trip_id,
+        "idempotency_key": context.idempotency_key,
+        "checkout": checkout,
+        "payment": _ap2_payment(instructions),
+        "constraints": {
+            "allowed_action": context.mandate.allowed_action,
+            "max_total_sgd": context.mandate.max_total_sgd,
+            "max_agent_payment_usd": _decimal_str(context.mandate.max_agent_payment_usd),
+            "requires_user_visible_receipt": context.mandate.requires_user_visible_receipt,
+        },
+        "confirmation": {
+            "confirmation_id": confirmation_id,
+            "confirmed": True,
+            "confirmed_at": confirmed_at,
+            "trusted_surface": confirmation.trusted_surface,
+            "button_label": confirmation.button_label,
+        },
+        "iat": iat,
+        "exp": exp,
+        "nonce": _short_id("ap2_nonce", request.trip_id, context.idempotency_key, str(iat)),
+    }
+
+
+def _ap2_checkout(context: BookingContext) -> dict[str, Any]:
+    hotel = context.selected_hotel
+    return {
+        "checkout_id": f"checkout_{hotel['id']}_{context.mandate.checkin.isoformat()}",
+        "hotel_id": str(hotel["id"]),
+        "hotel_name": str(hotel.get("name") or ""),
+        "city": str(hotel.get("city") or context.mandate.city),
+        "checkin": context.mandate.checkin.isoformat(),
+        "checkout": context.mandate.checkout.isoformat(),
+        "nights": context.nights,
+        "guests": context.mandate.guests,
+        "estimated_total_sgd": context.estimated_total_sgd,
+        "room_type": hotel.get("room_type"),
+        "cancellation_policy": hotel.get("cancellation_policy"),
+        "mock_booking_only": True,
+    }
+
+
+def _ap2_payment(instructions: PaymentInstructions) -> dict[str, Any]:
+    return {
+        "protocol": instructions.protocol,
+        "network": instructions.network,
+        "asset": instructions.asset,
+        "amount": instructions.amount,
+        "payer": instructions.payer,
+        "payee": instructions.payee,
+        "payment_request_id": instructions.payment_request_id,
+    }
+
+
+def _ap2_preview(
+    context: BookingContext,
+    instructions: PaymentInstructions,
+) -> dict[str, Any]:
+    hotel = context.selected_hotel
+    return {
+        "hotel": {
+            "id": hotel.get("id"),
+            "name": hotel.get("name"),
+            "city": hotel.get("city") or context.mandate.city,
+            "area": hotel.get("area"),
+            "room_type": hotel.get("room_type"),
+            "cancellation_policy": hotel.get("cancellation_policy"),
+        },
+        "stay": {
+            "checkin": context.mandate.checkin.isoformat(),
+            "checkout": context.mandate.checkout.isoformat(),
+            "nights": context.nights,
+            "guests": context.mandate.guests,
+        },
+        "pricing": {
+            "price_per_night_sgd": hotel.get("price_per_night_sgd"),
+            "estimated_total_sgd": context.estimated_total_sgd,
+            "agent_payment_usd": _decimal_str(context.agent_payment_usd),
+        },
+        "payment": _ap2_payment(instructions),
+    }
+
+
+def _sign_ap2_payload(payload: dict[str, Any]) -> AP2SignedMandate:
+    secret = _ap2_demo_secret()
+    header = {"alg": _AP2_ALG, "typ": _AP2_TYP, "kid": _AP2_KID}
+    protected = _base64url_json(header)
+    encoded_payload = _base64url_json(payload)
+    signing_input = f"{protected}.{encoded_payload}".encode()
+    signature = _base64url_encode(
+        hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+    )
+    return AP2SignedMandate(
+        protected=protected,
+        payload=encoded_payload,
+        signature=signature,
+        payload_json=payload,
+    )
+
+
+def _verify_ap2_signed_mandate(
+    signed_mandate: Optional[AP2SignedMandate | dict[str, Any]],
+    request: HotelBookingRequest,
+    context: BookingContext,
+    instructions: PaymentInstructions,
+) -> AP2MandateSummary:
+    if signed_mandate is None:
+        raise ConstraintViolation(
+            "ap2_mandate_required",
+            "A signed AP2 mandate is required when AP2_MODE=demo_signed.",
+        )
+    try:
+        signed = (
+            signed_mandate
+            if isinstance(signed_mandate, AP2SignedMandate)
+            else AP2SignedMandate.model_validate(signed_mandate)
+        )
+        if signed.format != _AP2_FORMAT:
+            raise ConstraintViolation("ap2_mandate_malformed", "AP2 mandate format is unsupported.")
+        header = _decode_base64url_json(signed.protected)
+        payload = _decode_base64url_json(signed.payload)
+    except ConstraintViolation:
+        raise
+    except Exception as exc:
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 mandate is malformed.") from exc
+
+    _verify_ap2_header(header)
+    _verify_ap2_signature(signed)
+    _verify_ap2_payload(payload, request, context, instructions)
+    return _ap2_summary_from_payload(payload, "verified")
+
+
+def _verify_ap2_header(header: dict[str, Any]) -> None:
+    if (
+        header.get("alg") != _AP2_ALG
+        or header.get("typ") != _AP2_TYP
+        or header.get("kid") != _AP2_KID
+    ):
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 mandate header is unsupported.")
+
+
+def _verify_ap2_signature(signed: AP2SignedMandate) -> None:
+    secret = _ap2_demo_secret()
+    signing_input = f"{signed.protected}.{signed.payload}".encode()
+    expected = _base64url_encode(
+        hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(expected, signed.signature):
+        raise ConstraintViolation("ap2_signature_invalid", "AP2 mandate signature is invalid.")
+
+
+def _verify_ap2_payload(
+    payload: dict[str, Any],
+    request: HotelBookingRequest,
+    context: BookingContext,
+    instructions: PaymentInstructions,
+) -> None:
+    now = int(datetime.now(timezone.utc).timestamp())
+    iat = _payload_int(payload, "iat")
+    exp = _payload_int(payload, "exp")
+    if payload.get("vct") != _AP2_VCT or payload.get("mode") != "direct":
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 mandate payload type is unsupported.")
+    if payload.get("issuer") != _ap2_issuer() or payload.get("audience") != _ap2_audience():
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 mandate issuer or audience is unsupported.")
+    if exp <= now:
+        raise ConstraintViolation("ap2_mandate_expired", "AP2 mandate is expired.")
+    if iat > now + _AP2_CLOCK_SKEW_SECONDS:
+        raise ConstraintViolation("ap2_mandate_not_yet_valid", "AP2 mandate is not yet valid.")
+    if (
+        payload.get("trip_id") != request.trip_id
+        or payload.get("mandate_id") != context.mandate.mandate_id
+        or payload.get("idempotency_key") != context.idempotency_key
+    ):
+        raise ConstraintViolation("ap2_mandate_trip_mismatch", "AP2 mandate does not match this trip.")
+
+    checkout = _payload_dict(payload, "checkout")
+    if checkout.get("checkout_hash") != _checkout_hash(checkout):
+        raise ConstraintViolation("ap2_mandate_checkout_mismatch", "AP2 checkout hash does not match.")
+    expected_checkout = _ap2_checkout(context)
+    expected_checkout["checkout_hash"] = _checkout_hash(expected_checkout)
+    for field_name, expected in expected_checkout.items():
+        if checkout.get(field_name) != expected:
+            raise ConstraintViolation(
+                "ap2_mandate_checkout_mismatch",
+                f"AP2 checkout {field_name} does not match this booking.",
+            )
+
+    constraints = _payload_dict(payload, "constraints")
+    if (
+        constraints.get("allowed_action") != "mock_hotel_booking"
+        or constraints.get("max_total_sgd") != context.mandate.max_total_sgd
+        or str(constraints.get("max_agent_payment_usd")) != _decimal_str(context.mandate.max_agent_payment_usd)
+        or constraints.get("requires_user_visible_receipt") != context.mandate.requires_user_visible_receipt
+    ):
+        raise ConstraintViolation("ap2_mandate_checkout_mismatch", "AP2 mandate constraints do not match.")
+
+    payment = _payload_dict(payload, "payment")
+    expected_payment = _ap2_payment(instructions)
+    for field_name, expected in expected_payment.items():
+        if payment.get(field_name) != expected:
+            raise ConstraintViolation(
+                "ap2_mandate_payment_mismatch",
+                f"AP2 payment {field_name} does not match the payment request.",
+            )
+
+    confirmation = _payload_dict(payload, "confirmation")
+    if confirmation.get("button_label") != _AP2_BUTTON_LABEL or confirmation.get("confirmed") is not True:
+        raise ConstraintViolation("ap2_confirmation_required", "AP2 mandate confirmation is missing.")
+    if not confirmation.get("confirmation_id") or not confirmation.get("confirmed_at"):
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 confirmation is malformed.")
+
+
+def _ap2_summary_from_payload(
+    payload: dict[str, Any],
+    status: Literal["created", "verified", "rejected"],
+    signed_mandate: Optional[AP2SignedMandate] = None,
+) -> AP2MandateSummary:
+    checkout = _payload_dict(payload, "checkout")
+    confirmation = _payload_dict(payload, "confirmation")
+    return AP2MandateSummary(
+        status=status,
+        mandate_id=str(payload["mandate_id"]),
+        checkout_hash=str(checkout["checkout_hash"]),
+        confirmation_id=str(confirmation["confirmation_id"]),
+        confirmed_at=_parse_ap2_datetime(str(confirmation["confirmed_at"])),
+        issuer=str(payload["issuer"]),
+        signed_mandate=signed_mandate,
+    )
+
+
+def _ap2_rejected(
+    prior_events: list[AuditEvent],
+    exc: ConstraintViolation,
+) -> HotelBookingResponse:
+    return HotelBookingResponse(
+        status="rejected",
+        audit_events=[
+            *prior_events,
+            AuditEvent(type="ap2_mandate_rejected", message=exc.message),
+        ],
+        error=BookingError(code=exc.code, message=exc.message),
+    )
+
+
+def _ap2_mandate_verified_event(summary: AP2MandateSummary) -> AuditEvent:
+    return AuditEvent(
+        type="ap2_mandate_verified",
+        message=f"AP2 demo mandate {summary.mandate_id} verified.",
+    )
+
+
+def _ap2_mode() -> str:
+    return os.getenv("AP2_MODE", "disabled").strip().lower() or "disabled"
+
+
+def _ap2_demo_secret() -> str:
+    secret = os.getenv("AP2_DEMO_SIGNING_SECRET", "").strip()
+    if not secret:
+        raise ConstraintViolation(
+            "ap2_config_missing",
+            "AP2_DEMO_SIGNING_SECRET is required for AP2 demo signing.",
+        )
+    return secret
+
+
+def _ap2_issuer() -> str:
+    return os.getenv("AP2_DEMO_ISSUER", "tripcanvas-demo-trusted-surface").strip()
+
+
+def _ap2_audience() -> str:
+    return os.getenv("AP2_DEMO_AUDIENCE", "tripcanvas-hotel-booking-agent").strip()
+
+
+def _ap2_mandate_ttl_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("AP2_MANDATE_TTL_SECONDS", "180")))
+    except ValueError:
+        return 180
+
+
+def _checkout_hash(checkout: dict[str, Any]) -> str:
+    material = {
+        key: value
+        for key, value in checkout.items()
+        if key != "checkout_hash"
+    }
+    digest = hashlib.sha256(_canonical_json(material)).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+
+
+def _base64url_json(value: Any) -> str:
+    return _base64url_encode(_canonical_json(value))
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
+def _decode_base64url_json(value: str) -> dict[str, Any]:
+    padded = value + ("=" * (-len(value) % 4))
+    decoded = base64.urlsafe_b64decode(padded.encode()).decode()
+    loaded = json.loads(decoded)
+    if not isinstance(loaded, dict):
+        raise ConstraintViolation("ap2_mandate_malformed", "AP2 encoded object must be a JSON object.")
+    return loaded
+
+
+def _payload_dict(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, dict):
+        raise ConstraintViolation("ap2_mandate_malformed", f"AP2 mandate {field_name} is malformed.")
+    return value
+
+
+def _payload_int(payload: dict[str, Any], field_name: str) -> int:
+    value = payload.get(field_name)
+    if not isinstance(value, int):
+        raise ConstraintViolation("ap2_mandate_malformed", f"AP2 mandate {field_name} is malformed.")
+    return value
+
+
+def _short_id(prefix: str, *parts: str) -> str:
+    digest = hashlib.sha1("|".join(parts).encode()).hexdigest()[:12]
+    return f"{prefix}_{digest}"
+
+
+def _isoformat_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_ap2_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def _validate_environment() -> None:
     booking_mode = os.getenv("HOTEL_BOOKING_MODE")
     if booking_mode and booking_mode != "mock":
@@ -876,6 +1357,7 @@ def _booking_receipt(
     request: HotelBookingRequest,
     context: BookingContext,
     payment: PaymentReceipt,
+    ap2_summary: Optional[AP2MandateSummary] = None,
 ) -> HotelBookingReceipt:
     hotel = context.selected_hotel
     booking_id = deterministic_booking_id(
@@ -915,6 +1397,7 @@ def _booking_receipt(
             "allowed_action": context.mandate.allowed_action,
             "mock_booking_only": context.mandate.mock_booking_only,
         },
+        ap2=ap2_summary,
         receipt_note=_receipt_note(payment),
     )
 

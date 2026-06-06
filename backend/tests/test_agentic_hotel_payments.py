@@ -1,3 +1,4 @@
+import base64
 import copy
 import hashlib
 import json
@@ -15,8 +16,10 @@ from backend.spike_agentic_payments import (
     HotelBookingRequest,
     X402RealAdapter,
     X402SimulationAdapter,
+    create_ap2_hotel_booking_mandate,
     load_hotel_tool_dict,
     resolve_selected_hotel,
+    _sign_ap2_payload,
 )
 
 
@@ -40,6 +43,16 @@ class FakeX402Binding:
         if self.fail_settlement:
             return {"success": False, "error": "facilitator rejected payment"}
         return {"success": True, "tx_hash": "0xREALX402SETTLED"}
+
+
+class RecordingPaymentAdapter(X402SimulationAdapter):
+    def __init__(self):
+        super().__init__()
+        self.create_payment_proof_called = False
+
+    def create_payment_proof(self, request, instructions):
+        self.create_payment_proof_called = True
+        return super().create_payment_proof(request, instructions)
 
 
 def booking_ready_hotel_tool() -> dict:
@@ -120,6 +133,46 @@ def real_demo_request(**overrides) -> HotelBookingRequest:
     }
     data.update(overrides)
     return demo_request(**data)
+
+
+def signed_demo_mandate():
+    response = create_ap2_hotel_booking_mandate(
+        demo_request(),
+        user_confirmation={
+            "confirmed": True,
+            "button_label": "Confirm Hotel Booking",
+            "trusted_surface": "tripcanvas-web",
+        },
+    )
+    return response.ap2.signed_mandate
+
+
+def tamper_encoded_payload(signed_mandate, mutator):
+    payload = _decode_test_payload(signed_mandate.payload)
+    mutator(payload)
+    tampered_payload = _base64url_json(payload)
+    return signed_mandate.model_copy(
+        update={
+            "payload": tampered_payload,
+            "payload_json": payload,
+        }
+    )
+
+
+def resign_payload(signed_mandate, mutator):
+    payload = _decode_test_payload(signed_mandate.payload)
+    mutator(payload)
+    return _sign_ap2_payload(payload)
+
+
+def _decode_test_payload(encoded):
+    padding = "=" * (-len(encoded) % 4)
+    return json.loads(base64.urlsafe_b64decode((encoded + padding).encode()).decode())
+
+
+def _base64url_json(payload):
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 class AgenticHotelPaymentTests(unittest.TestCase):
@@ -272,6 +325,176 @@ class AgenticHotelPaymentTests(unittest.TestCase):
         self.assertEqual(response.error.code, "payment_simulation_failed")
         self.assertEqual(response.audit_events[-1].type, "payment_failed")
 
+    def test_ap2_demo_mandate_creation_requires_user_confirmation(self):
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            response = create_ap2_hotel_booking_mandate(
+                demo_request(),
+                user_confirmation={
+                    "confirmed": False,
+                    "button_label": "Confirm Hotel Booking",
+                    "trusted_surface": "tripcanvas-web",
+                },
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertIsNone(response.ap2)
+        self.assertEqual(response.error.code, "ap2_confirmation_required")
+
+    def test_ap2_demo_mandate_creation_returns_signed_bundle(self):
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            response = create_ap2_hotel_booking_mandate(
+                demo_request(),
+                user_confirmation={
+                    "confirmed": True,
+                    "button_label": "Confirm Hotel Booking",
+                    "trusted_surface": "tripcanvas-web",
+                },
+            )
+
+        self.assertEqual(response.status, "signed")
+        self.assertEqual(response.ap2.status, "created")
+        self.assertEqual(response.ap2.signed_mandate.format, "tripcanvas-ap2-demo-jws")
+        self.assertEqual(
+            response.ap2.signed_mandate.payload_json["vct"],
+            "tripcanvas.ap2.hotel_booking.confirmation.1",
+        )
+        self.assertEqual(
+            response.ap2.signed_mandate.payload_json["checkout"]["hotel_id"],
+            "hotel_royal_park_shiodome",
+        )
+        self.assertEqual(response.preview["payment"]["amount"], "0.01")
+
+    def test_ap2_demo_mode_requires_signed_mandate_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request()
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_mandate_required")
+        self.assertIsNone(response.payment)
+        self.assertIsNone(response.receipt)
+        self.assertFalse(adapter.create_payment_proof_called)
+        self.assertNotIn("payment_completed", [event.type for event in response.audit_events])
+
+    def test_ap2_valid_signed_mandate_allows_x402_simulation(self):
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = signed_demo_mandate()
+            response = AgenticHotelPaymentService().run_payment_loop(
+                demo_request(ap2_signed_mandate=signed)
+            )
+
+        self.assertEqual(response.status, "mock_confirmed")
+        self.assertEqual(response.ap2.status, "verified")
+        self.assertEqual(response.receipt.ap2.status, "verified")
+        self.assertEqual(response.payment.status, "simulated")
+        self.assertIn("ap2_mandate_verified", [event.type for event in response.audit_events])
+
+    def test_ap2_payload_json_tampering_is_ignored_when_encoded_payload_is_valid(self):
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = signed_demo_mandate()
+            tampered = signed.model_copy(
+                update={
+                    "payload_json": {
+                        **signed.payload_json,
+                        "payment": {**signed.payload_json["payment"], "amount": "999.00"},
+                    }
+                }
+            )
+            response = AgenticHotelPaymentService().run_payment_loop(
+                demo_request(ap2_signed_mandate=tampered)
+            )
+
+        self.assertEqual(response.status, "mock_confirmed")
+        self.assertEqual(response.ap2.status, "verified")
+
+    def test_ap2_tampered_encoded_payload_rejects_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = signed_demo_mandate()
+            tampered = tamper_encoded_payload(
+                signed,
+                lambda payload: payload["payment"].update({"amount": "0.02"}),
+            )
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request(ap2_signed_mandate=tampered)
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_signature_invalid")
+        self.assertIsNone(response.payment)
+        self.assertFalse(adapter.create_payment_proof_called)
+
+    def test_ap2_expired_mandate_rejects_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(
+            os.environ,
+            {
+                "AP2_MODE": "demo_signed",
+                "AP2_DEMO_SIGNING_SECRET": "test-secret",
+                "AP2_MANDATE_TTL_SECONDS": "0",
+            },
+        ):
+            signed = signed_demo_mandate()
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request(ap2_signed_mandate=signed)
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_mandate_expired")
+        self.assertFalse(adapter.create_payment_proof_called)
+
+    def test_ap2_future_iat_rejects_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = resign_payload(
+                signed_demo_mandate(),
+                lambda payload: payload.update(
+                    {
+                        "iat": payload["iat"] + 120,
+                        "exp": payload["exp"] + 120,
+                    }
+                ),
+            )
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request(ap2_signed_mandate=signed)
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_mandate_not_yet_valid")
+        self.assertFalse(adapter.create_payment_proof_called)
+
+    def test_ap2_payment_mismatch_rejects_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = resign_payload(
+                signed_demo_mandate(),
+                lambda payload: payload["payment"].update({"payee": "0xWrongSeller"}),
+            )
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request(ap2_signed_mandate=signed)
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_mandate_payment_mismatch")
+        self.assertFalse(adapter.create_payment_proof_called)
+
+    def test_ap2_checkout_mismatch_rejects_before_x402(self):
+        adapter = RecordingPaymentAdapter()
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            signed = resign_payload(
+                signed_demo_mandate(),
+                lambda payload: payload["checkout"].update({"hotel_id": "hotel_wrong"}),
+            )
+            response = AgenticHotelPaymentService(payment_adapter=adapter).run_payment_loop(
+                demo_request(ap2_signed_mandate=signed)
+            )
+
+        self.assertEqual(response.status, "rejected")
+        self.assertEqual(response.error.code, "ap2_mandate_checkout_mismatch")
+        self.assertFalse(adapter.create_payment_proof_called)
+
     def test_real_mode_selects_real_x402_adapter(self):
         with patch.dict(os.environ, {"X402_MODE": "real"}):
             service = AgenticHotelPaymentService()
@@ -369,6 +592,26 @@ class AgenticHotelPaymentTests(unittest.TestCase):
                 "booking_confirmed",
             ],
         )
+
+    def test_ap2_hotel_booking_mandate_endpoint_signs_preview(self):
+        with patch.dict(os.environ, {"AP2_MODE": "demo_signed", "AP2_DEMO_SIGNING_SECRET": "test-secret"}):
+            response = TestClient(app).post(
+                "/ap2/hotel-booking-mandate",
+                json={
+                    **demo_request().model_dump(mode="json"),
+                    "user_confirmation": {
+                        "confirmed": True,
+                        "button_label": "Confirm Hotel Booking",
+                        "trusted_surface": "tripcanvas-web",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "signed")
+        self.assertEqual(body["ap2"]["status"], "created")
+        self.assertEqual(body["preview"]["payment"]["amount"], "0.01")
 
 
 if __name__ == "__main__":

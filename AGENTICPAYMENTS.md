@@ -108,7 +108,11 @@ ORCHESTRATOR_PRIVATE_KEY=...
 HOTEL_AGENT_PAY_TO=0x...
 
 HOTEL_BOOKING_MODE=mock
-AP2_MANDATE_MODE=demo_unsigned
+AP2_MODE=disabled
+AP2_DEMO_ISSUER=tripcanvas-demo-trusted-surface
+AP2_DEMO_AUDIENCE=tripcanvas-hotel-booking-agent
+AP2_MANDATE_TTL_SECONDS=180
+AP2_DEMO_SIGNING_SECRET=...
 ```
 
 Guardrails:
@@ -119,6 +123,9 @@ Guardrails:
 - Use tiny testnet/sandbox amounts only.
 - Fail closed if `HOTEL_BOOKING_MODE` is not `mock`.
 - Fail closed in `X402_MODE=real`; do not fall back to simulated payment if signing, verification, or settlement fails.
+- Keep `AP2_MODE=disabled` as the default local path. Set `AP2_MODE=demo_signed`
+  only when the backend should require a signed AP2 demo mandate before x402.
+- `AP2_DEMO_SIGNING_SECRET` is required only in `AP2_MODE=demo_signed`.
 
 ## Data Fixtures
 
@@ -163,9 +170,12 @@ Example shape:
 }
 ```
 
-### AP2-Shaped Booking Mandate
+### AP2 Demo Signed Booking Mandate
 
-This is the user-authorized purchase scope. V1 may store it as unsigned demo JSON, but the fields should be compatible with a future signed mandate.
+This is the user-authorized purchase scope. In backend AP2 demo signed mode,
+`POST /ap2/hotel-booking-mandate` signs the final hotel checkout terms and
+`POST /hotel-booking` verifies that signed mandate before creating any x402
+payment proof.
 
 ```json
 {
@@ -188,6 +198,16 @@ This is the user-authorized purchase scope. V1 may store it as unsigned demo JSO
   "mock_booking_only": true
 }
 ```
+
+The signed mandate binds the selected hotel, stay, idempotency key, payment
+amount, payer, payee, network, and x402 payment request id. The default TTL is
+180 seconds via `AP2_MANDATE_TTL_SECONDS`; expired or tampered mandates are
+rejected before any x402 adapter call.
+
+This is AP2-style demo signing for the hackathon backend flow, not production
+AP2 compliance. Production AP2 would require a real credential provider,
+production trust model, and full protocol conformance beyond this HMAC-signed
+demo mandate.
 
 ## Backend Flow
 

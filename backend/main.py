@@ -39,9 +39,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from spike_agentic_payments import (
+    AP2HotelBookingMandateRequest,
+    AP2MandateResponse,
     AgenticHotelPaymentService,
     HotelBookingRequest,
     HotelBookingResponse,
+    create_ap2_hotel_booking_mandate,
 )
 from spike_e2e import PlaceResult as ExtractedPlace
 from spike_e2e_planner import (
@@ -450,3 +453,8 @@ async def hotel_base(req: HotelBaseRequest) -> StreamingResponse:
 @app.post("/hotel-booking", response_model=HotelBookingResponse)
 async def hotel_booking(req: HotelBookingRequest) -> HotelBookingResponse:
     return AgenticHotelPaymentService().run_payment_loop(req)
+
+
+@app.post("/ap2/hotel-booking-mandate", response_model=AP2MandateResponse)
+async def ap2_hotel_booking_mandate(req: AP2HotelBookingMandateRequest) -> AP2MandateResponse:
+    return create_ap2_hotel_booking_mandate(req)
