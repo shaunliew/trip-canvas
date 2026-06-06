@@ -10,6 +10,11 @@ import type {
   MapLayerMouseEvent,
 } from "mapbox-gl";
 import { coerceSafeMapCenter, isValidLngLatValue } from "@/lib/trip/geo";
+import {
+  getMapCalloutPosition,
+  type MapCalloutPosition,
+} from "@/lib/trip/map-overlay";
+import { buildActiveAwareLineWidth } from "@/lib/trip/map-style";
 import type { DayFilter, TripDay, TripHotelBase, TripPlace } from "@/lib/trip/types";
 
 export type TripMapMode = "globe" | "extracting" | "trip";
@@ -24,6 +29,7 @@ type TripMapProps = {
   initialZoom: number;
   days: TripDay[];
   selectedDay: DayFilter;
+  selectedRouteDay?: TripDay["day"] | null;
   places: TripPlace[];
   selectedPlace: TripPlace | null;
   hotelBase?: TripHotelBase;
@@ -46,6 +52,7 @@ type PlaceFeatureProperties = {
   day: number;
   glyph: string;
   selected: boolean;
+  muted: boolean;
 };
 type PlaceFeatureCollection = GeoJSON.FeatureCollection<
   GeoJSON.Point,
@@ -60,6 +67,11 @@ type HotelHubFeatureCollection = GeoJSON.FeatureCollection<
   GeoJSON.Point,
   HotelHubFeatureProperties
 >;
+type SelectedPlaceCalloutLayout = MapCalloutPosition & {
+  width: number;
+  height: number;
+  markerY: number;
+};
 
 const STANDARD_DAY_PITCH = 56;
 const STANDARD_DAY_BEARING = -22;
@@ -87,12 +99,15 @@ const STANDARD_ARCHITECTURAL_BASEMAP_CONFIG = {
 const USE_SAFE_3D_FALLBACK = false;
 const RELIABLE_BUILDINGS_LAYER_ID = "tripcanvas-reliable-3d-buildings";
 const ROUTE_SOURCE_ID = "tripcanvas-routes";
+const ROUTE_CASING_LAYER_ID = "tripcanvas-routes-casing";
 const ROUTE_UNDERLAY_LAYER_ID = "tripcanvas-routes-underlay";
 const ROUTE_ACTIVE_LAYER_ID = "tripcanvas-routes-active";
+const ROUTE_ACTIVE_DASH_LAYER_ID = "tripcanvas-routes-active-dash";
 const PLACE_SOURCE_ID = "tripcanvas-places";
 const PLACE_CLUSTER_LAYER_ID = "tripcanvas-place-clusters";
 const PLACE_CLUSTER_COUNT_LAYER_ID = "tripcanvas-place-cluster-counts";
 const PLACE_CLUSTER_HITBOX_LAYER_ID = "tripcanvas-place-cluster-hitbox";
+const PLACE_SELECTED_PULSE_LAYER_ID = "tripcanvas-place-selected-pulse";
 const PLACE_HALO_LAYER_ID = "tripcanvas-place-halos";
 const PLACE_DOT_LAYER_ID = "tripcanvas-place-dots";
 const PLACE_GLYPH_LAYER_ID = "tripcanvas-place-glyphs";
@@ -115,6 +130,22 @@ const EMPTY_HOTEL_HUB_COLLECTION: HotelHubFeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+const ROUTE_DASH_SEQUENCE: number[][] = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
 
 export function TripMap({
   mode = "trip",
@@ -123,6 +154,7 @@ export function TripMap({
   initialZoom,
   days,
   selectedDay,
+  selectedRouteDay,
   places,
   selectedPlace,
   hotelBase,
@@ -137,15 +169,25 @@ export function TripMap({
   const previousFlyToPlaceIdRef = useRef<string | null>(null);
   const focusedPlaceSignatureRef = useRef<string | null>(null);
   const autoRotateFrameRef = useRef<number | null>(null);
+  const selectedPulseFrameRef = useRef<number | null>(null);
+  const routeDashFrameRef = useRef<number | null>(null);
   const prefersReducedMotionRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
+  const [selectedCalloutLayout, setSelectedCalloutLayout] =
+    useState<SelectedPlaceCalloutLayout | null>(null);
   const safeCenter = useMemo(
     () => coerceSafeMapCenter(center),
     [center.lat, center.lng],
   );
   const routeCollection = useMemo(
-    () => buildRouteFeatureCollection(days, selectedDay),
-    [days, selectedDay],
+    () =>
+      buildRouteFeatureCollection(
+        days,
+        places,
+        selectedDay,
+        selectedRouteDay ?? selectedPlace?.day ?? null,
+      ),
+    [days, places, selectedDay, selectedPlace?.day, selectedRouteDay],
   );
   const hotelHub = useMemo(
     () => deriveHotelHub(hotelBase),
@@ -159,6 +201,22 @@ export function TripMap({
   const placeCollection = useMemo(
     () => buildPlaceFeatureCollection(places, selectedPlace?.id ?? null),
     [places, selectedPlace?.id],
+  );
+  const hasActiveRoute = useMemo(
+    () => routeCollection.features.some((feature) => feature.properties.active),
+    [routeCollection],
+  );
+  const selectedPlaceDay = useMemo(
+    () => days.find((day) => day.day === selectedPlace?.day) ?? null,
+    [days, selectedPlace?.day],
+  );
+  const selectedCalloutReason = useMemo(
+    () => buildMapCalloutReason(selectedPlace, selectedPlaceDay),
+    [selectedPlace, selectedPlaceDay],
+  );
+  const selectedCalloutEvidence = useMemo(
+    () => buildMapCalloutEvidence(selectedPlace, selectedPlaceDay),
+    [selectedPlace, selectedPlaceDay],
   );
 
   useEffect(() => {
@@ -260,12 +318,20 @@ export function TripMap({
 
       console.warn(
         "[TripCanvas map] Map initialization failed.",
-        getUnknownErrorMessage(error),
+        redactMapboxAccessToken(getUnknownErrorMessage(error)),
       );
     });
 
     return () => {
       isMounted = false;
+      if (selectedPulseFrameRef.current !== null) {
+        cancelAnimationFrame(selectedPulseFrameRef.current);
+        selectedPulseFrameRef.current = null;
+      }
+      if (routeDashFrameRef.current !== null) {
+        cancelAnimationFrame(routeDashFrameRef.current);
+        routeDashFrameRef.current = null;
+      }
       cleanupMapRuntimeGuardsRef.current?.();
       cleanupMapRuntimeGuardsRef.current = null;
       mapRef.current?.remove();
@@ -368,6 +434,103 @@ export function TripMap({
   }, [hotelHubCollection, mapReady]);
 
   useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return;
+    }
+
+    const map = mapRef.current;
+    ensurePlaceLayers(map);
+
+    if (selectedPulseFrameRef.current !== null) {
+      cancelAnimationFrame(selectedPulseFrameRef.current);
+      selectedPulseFrameRef.current = null;
+    }
+
+    if (!selectedPlace || prefersReducedMotionRef.current) {
+      if (map.getLayer(PLACE_SELECTED_PULSE_LAYER_ID)) {
+        map.setPaintProperty(PLACE_SELECTED_PULSE_LAYER_ID, "circle-radius", 32);
+        map.setPaintProperty(PLACE_SELECTED_PULSE_LAYER_ID, "circle-opacity", 0.2);
+      }
+      return;
+    }
+
+    const animatePulse = (timestamp: number) => {
+      if (!map.getLayer(PLACE_SELECTED_PULSE_LAYER_ID)) {
+        return;
+      }
+
+      const progress = (timestamp % 1400) / 1400;
+      const radius = 28 + progress * 18;
+      const opacity = 0.26 - progress * 0.18;
+      map.setPaintProperty(PLACE_SELECTED_PULSE_LAYER_ID, "circle-radius", radius);
+      map.setPaintProperty(PLACE_SELECTED_PULSE_LAYER_ID, "circle-opacity", opacity);
+      selectedPulseFrameRef.current = requestAnimationFrame(animatePulse);
+    };
+
+    selectedPulseFrameRef.current = requestAnimationFrame(animatePulse);
+
+    return () => {
+      if (selectedPulseFrameRef.current !== null) {
+        cancelAnimationFrame(selectedPulseFrameRef.current);
+        selectedPulseFrameRef.current = null;
+      }
+    };
+  }, [mapReady, selectedPlace?.id]);
+
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return;
+    }
+
+    const map = mapRef.current;
+    ensureRouteLayers(map);
+
+    if (routeDashFrameRef.current !== null) {
+      cancelAnimationFrame(routeDashFrameRef.current);
+      routeDashFrameRef.current = null;
+    }
+
+    if (!hasActiveRoute || prefersReducedMotionRef.current) {
+      if (map.getLayer(ROUTE_ACTIVE_DASH_LAYER_ID)) {
+        map.setPaintProperty(
+          ROUTE_ACTIVE_DASH_LAYER_ID,
+          "line-dasharray",
+          ROUTE_DASH_SEQUENCE[0],
+        );
+      }
+      return;
+    }
+
+    let step = -1;
+    const animateRouteDash = (timestamp: number) => {
+      if (!map.getLayer(ROUTE_ACTIVE_DASH_LAYER_ID)) {
+        return;
+      }
+
+      const nextStep = Math.floor((timestamp / 80) % ROUTE_DASH_SEQUENCE.length);
+      if (nextStep !== step) {
+        map.setPaintProperty(
+          ROUTE_ACTIVE_DASH_LAYER_ID,
+          "line-dasharray",
+          ROUTE_DASH_SEQUENCE[nextStep],
+        );
+        step = nextStep;
+      }
+
+      routeDashFrameRef.current = requestAnimationFrame(animateRouteDash);
+    };
+
+    routeDashFrameRef.current = requestAnimationFrame(animateRouteDash);
+
+    return () => {
+      if (routeDashFrameRef.current !== null) {
+        cancelAnimationFrame(routeDashFrameRef.current);
+        routeDashFrameRef.current = null;
+      }
+    };
+  }, [hasActiveRoute, mapReady]);
+
+  useEffect(() => {
     if (
       mode !== "trip" ||
       !mapReady ||
@@ -400,10 +563,62 @@ export function TripMap({
 
     mapRef.current.flyTo({
       ...selectedCamera,
+      offset: getSelectedPlaceOffset(),
       duration: 1400,
       essential: false,
     });
   }, [initialZoom, mapReady, mode, selectedPlace]);
+
+  useEffect(() => {
+    if (
+      !mapReady ||
+      !mapRef.current ||
+      mode !== "trip" ||
+      !selectedPlace ||
+      !isValidLngLat(selectedPlace.lng, selectedPlace.lat)
+    ) {
+      setSelectedCalloutLayout(null);
+      return;
+    }
+
+    const map = mapRef.current;
+    const updateCallout = () => {
+      const point = map.project([selectedPlace.lng, selectedPlace.lat]);
+      const width = window.innerWidth < 640 ? 224 : 272;
+      const height = window.innerWidth < 640 ? 126 : 132;
+      const position = getMapCalloutPosition({
+        marker: point,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
+        callout: {
+          width,
+          height,
+        },
+        margin: window.innerWidth < 768 ? 14 : 24,
+        verticalGap: window.innerWidth < 640 ? 18 : 26,
+      });
+
+      setSelectedCalloutLayout({
+        ...position,
+        width,
+        height,
+        markerY: Math.round(point.y),
+      });
+    };
+
+    updateCallout();
+    map.on("move", updateCallout);
+    map.on("resize", updateCallout);
+    window.addEventListener("resize", updateCallout);
+
+    return () => {
+      map.off("move", updateCallout);
+      map.off("resize", updateCallout);
+      window.removeEventListener("resize", updateCallout);
+    };
+  }, [mapReady, mode, selectedPlace]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || mode !== "extracting" || places.length === 0) {
@@ -472,6 +687,66 @@ export function TripMap({
           Base near {hotelHubName}
         </div>
       ) : null}
+      {selectedPlace && selectedCalloutLayout ? (
+        <div
+          data-testid="selected-place-map-callout"
+          className="pointer-events-none absolute z-20 rounded-lg border border-cyan-100/55 bg-slate-950/88 p-3 text-slate-50 shadow-2xl shadow-slate-950/35 backdrop-blur-xl"
+          style={{
+            left: selectedCalloutLayout.left,
+            top: selectedCalloutLayout.top,
+            width: selectedCalloutLayout.width,
+            height: selectedCalloutLayout.height,
+          }}
+        >
+          <span
+            className={`absolute h-3 w-3 rotate-45 border-cyan-100/55 bg-slate-950/88 ${
+              selectedCalloutLayout.top > selectedCalloutLayout.markerY
+                ? "-top-1.5 border-l border-t"
+                : "-bottom-1.5 border-b border-r"
+            }`}
+            style={{
+              left: Math.min(
+                Math.max(selectedCalloutLayout.anchorX - 6, 18),
+                selectedCalloutLayout.width - 24,
+              ),
+            }}
+          />
+          <div className="relative space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-white">
+                  {selectedPlace.name}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <span className="rounded-full bg-cyan-300/18 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">
+                    Day {selectedPlace.day}
+                  </span>
+                  <span className="rounded-full bg-amber-200/18 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-100">
+                    {selectedPlace.category}
+                  </span>
+                </div>
+              </div>
+              <span className="rounded-full border border-amber-100/45 bg-amber-200/18 px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-amber-100">
+                Chosen
+              </span>
+            </div>
+            <p
+              className="text-[11px] font-semibold leading-snug text-slate-100"
+              style={{
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: 3,
+                overflow: "hidden",
+              }}
+            >
+              {selectedCalloutReason}
+            </p>
+            <p className="hidden text-[10px] font-semibold leading-snug text-cyan-100/82 sm:block">
+              {selectedCalloutEvidence}
+            </p>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -514,9 +789,54 @@ function deriveHotelHub(hotelBase?: TripHotelBase) {
   return null;
 }
 
+function buildMapCalloutReason(place: TripPlace | null, day: TripDay | null) {
+  if (!place) {
+    return "";
+  }
+
+  return truncateMapText(
+    place.plannerSummary ||
+      place.summary ||
+      place.dayPlanText ||
+      day?.summary ||
+      "The planner selected this stop from the extracted Reel signals.",
+    116,
+  );
+}
+
+function buildMapCalloutEvidence(place: TripPlace | null, day: TripDay | null) {
+  if (!place) {
+    return "";
+  }
+
+  if (place.evidenceQuote) {
+    return truncateMapText(`Reel evidence: "${place.evidenceQuote}"`, 108);
+  }
+
+  if (typeof place.confidence === "number") {
+    return `${Math.round(place.confidence * 100)}% extraction confidence.`;
+  }
+
+  if (place.dayPlanText) {
+    return truncateMapText(place.dayPlanText, 108);
+  }
+
+  return truncateMapText(day?.weatherStrategy || "Open the agent panel for the full rationale.", 108);
+}
+
+function truncateMapText(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
+}
+
 function registerMapRuntimeGuards(map: Map) {
   const handleMapError = (event: MapEventOf<"error">) => {
-    const message = getUnknownErrorMessage(event.error);
+    const message = redactMapboxAccessToken(getUnknownErrorMessage(event.error));
 
     if (isExpectedMapboxRuntimeNoise(message)) {
       return;
@@ -576,6 +896,10 @@ function getUnknownErrorMessage(value: unknown) {
   }
 
   return String(value);
+}
+
+function redactMapboxAccessToken(message: string) {
+  return message.replace(/access_token=[^&\s)]+/g, "access_token=[redacted]");
 }
 
 function isExpectedMapboxRuntimeNoise(message: string) {
@@ -701,12 +1025,12 @@ function ensureRouteLayers(map: Map) {
     });
   }
 
-  if (!map.getLayer(ROUTE_UNDERLAY_LAYER_ID)) {
+  if (!map.getLayer(ROUTE_CASING_LAYER_ID)) {
     map.addLayer({
-      id: ROUTE_UNDERLAY_LAYER_ID,
+      id: ROUTE_CASING_LAYER_ID,
       type: "line",
       source: ROUTE_SOURCE_ID,
-      slot: "middle",
+      slot: "top",
       layout: {
         "line-cap": "round",
         "line-join": "round",
@@ -715,18 +1039,60 @@ function ensureRouteLayers(map: Map) {
         "line-color": [
           "case",
           ["boolean", ["get", "active"], false],
-          "rgba(245, 158, 11, 0.56)",
-          "rgba(20, 184, 166, 0.34)",
+          "rgba(15, 23, 42, 0.74)",
+          "rgba(15, 23, 42, 0.3)",
         ],
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 14, 7, 16, 10],
+        "line-width": buildActiveAwareLineWidth({
+          zoomStops: [
+            [10, 9, 3.5],
+            [14, 16, 6],
+            [16, 21, 8],
+          ],
+        }),
         "line-opacity": [
           "case",
           ["boolean", ["get", "active"], false],
-          0.82,
-          0.56,
+          0.76,
+          0.2,
         ],
-        "line-blur": 1.8,
-        "line-emissive-strength": 0.45,
+        "line-blur": 0.7,
+        "line-emissive-strength": 0.2,
+      },
+    });
+  }
+
+  if (!map.getLayer(ROUTE_UNDERLAY_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_UNDERLAY_LAYER_ID,
+      type: "line",
+      source: ROUTE_SOURCE_ID,
+      slot: "top",
+      layout: {
+        "line-cap": "round",
+        "line-join": "round",
+      },
+      paint: {
+        "line-color": [
+          "case",
+          ["boolean", ["get", "active"], false],
+          "rgba(34, 211, 238, 0.7)",
+          "rgba(20, 184, 166, 0.2)",
+        ],
+        "line-width": buildActiveAwareLineWidth({
+          zoomStops: [
+            [10, 6.4, 2.5],
+            [14, 11.5, 4.2],
+            [16, 15, 6],
+          ],
+        }),
+        "line-opacity": [
+          "case",
+          ["boolean", ["get", "active"], false],
+          0.86,
+          0.26,
+        ],
+        "line-blur": 1.2,
+        "line-emissive-strength": 0.5,
       },
     });
   }
@@ -736,17 +1102,38 @@ function ensureRouteLayers(map: Map) {
       id: ROUTE_ACTIVE_LAYER_ID,
       type: "line",
       source: ROUTE_SOURCE_ID,
-      slot: "middle",
+      slot: "top",
       filter: ["==", ["get", "active"], true],
       layout: {
         "line-cap": "round",
         "line-join": "round",
       },
       paint: {
-        "line-color": "#f59e0b",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.2, 14, 4.8, 16, 7],
+        "line-color": "#22d3ee",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4.8, 14, 8, 16, 10],
         "line-opacity": 0.96,
-        "line-emissive-strength": 0.65,
+        "line-emissive-strength": 0.78,
+      },
+    });
+  }
+
+  if (!map.getLayer(ROUTE_ACTIVE_DASH_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTE_ACTIVE_DASH_LAYER_ID,
+      type: "line",
+      source: ROUTE_SOURCE_ID,
+      slot: "top",
+      filter: ["==", ["get", "active"], true],
+      layout: {
+        "line-cap": "round",
+        "line-join": "round",
+      },
+      paint: {
+        "line-color": "#fef3c7",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.8, 14, 3, 16, 4],
+        "line-opacity": 0.92,
+        "line-dasharray": ROUTE_DASH_SEQUENCE[0],
+        "line-emissive-strength": 0.9,
       },
     });
   }
@@ -821,6 +1208,27 @@ function ensurePlaceLayers(map: Map) {
     },
   };
 
+  const placeSelectedPulseLayer: AnyLayer = {
+    id: PLACE_SELECTED_PULSE_LAYER_ID,
+    type: "circle",
+    source: PLACE_SOURCE_ID,
+    slot: "top",
+    filter: [
+      "all",
+      ["!", ["has", "point_count"]],
+      ["==", ["get", "selected"], true],
+    ],
+    paint: {
+      "circle-color": "#22d3ee",
+      "circle-radius": 32,
+      "circle-opacity": 0.2,
+      "circle-stroke-color": "#fef3c7",
+      "circle-stroke-width": 2,
+      "circle-blur": 0.28,
+      "circle-emissive-strength": 0.58,
+    },
+  };
+
   const placeHaloLayer: AnyLayer = {
     id: PLACE_HALO_LAYER_ID,
     type: "circle",
@@ -832,17 +1240,21 @@ function ensurePlaceLayers(map: Map) {
       "circle-radius": [
         "case",
         ["boolean", ["get", "selected"], false],
-        24,
+        34,
+        ["boolean", ["get", "muted"], false],
+        9,
         18,
       ],
       "circle-opacity": [
         "case",
         ["boolean", ["get", "selected"], false],
-        0.34,
+        0.54,
+        ["boolean", ["get", "muted"], false],
+        0.04,
         0.2,
       ],
-      "circle-blur": 0.48,
-      "circle-emissive-strength": 0.18,
+      "circle-blur": 0.42,
+      "circle-emissive-strength": 0.32,
     },
   };
 
@@ -857,23 +1269,36 @@ function ensurePlaceLayers(map: Map) {
       "circle-radius": [
         "case",
         ["boolean", ["get", "selected"], false],
-        11,
+        15,
+        ["boolean", ["get", "muted"], false],
+        4.8,
         8.5,
       ],
       "circle-stroke-color": [
         "case",
         ["boolean", ["get", "selected"], false],
-        "rgba(15, 23, 42, 0.9)",
+        "#fef3c7",
+        ["boolean", ["get", "muted"], false],
+        "rgba(255, 255, 255, 0.36)",
         "rgba(255, 255, 255, 0.96)",
       ],
       "circle-stroke-width": [
         "case",
         ["boolean", ["get", "selected"], false],
-        4,
+        6,
+        ["boolean", ["get", "muted"], false],
+        1.5,
         5,
       ],
-      "circle-opacity": 0.98,
-      "circle-emissive-strength": 0.24,
+      "circle-opacity": [
+        "case",
+        ["boolean", ["get", "selected"], false],
+        1,
+        ["boolean", ["get", "muted"], false],
+        0.2,
+        0.98,
+      ],
+      "circle-emissive-strength": 0.38,
     },
   };
 
@@ -886,12 +1311,27 @@ function ensurePlaceLayers(map: Map) {
     layout: {
       "text-field": ["get", "glyph"],
       "text-font": ["DIN Offc Pro Bold", "Arial Unicode MS Bold"],
-      "text-size": 10.5,
+      "text-size": [
+        "case",
+        ["boolean", ["get", "selected"], false],
+        13,
+        ["boolean", ["get", "muted"], false],
+        8,
+        10.5,
+      ],
       "text-allow-overlap": true,
       "text-ignore-placement": true,
     },
     paint: {
       "text-color": "rgba(3, 7, 18, 0.9)",
+      "text-opacity": [
+        "case",
+        ["boolean", ["get", "selected"], false],
+        1,
+        ["boolean", ["get", "muted"], false],
+        0.22,
+        0.9,
+      ],
       "text-emissive-strength": 0.18,
     },
   };
@@ -913,6 +1353,7 @@ function ensurePlaceLayers(map: Map) {
     clusterLayer,
     clusterCountLayer,
     clusterHitboxLayer,
+    placeSelectedPulseLayer,
     placeHaloLayer,
     placeDotLayer,
     placeGlyphLayer,
@@ -1044,27 +1485,63 @@ function updateHotelHubSource(map: Map, hotelHubCollection: HotelHubFeatureColle
   }
 }
 
-function buildRouteFeatureCollection(days: TripDay[], selectedDay: DayFilter): RouteFeatureCollection {
+function buildRouteFeatureCollection(
+  days: TripDay[],
+  places: TripPlace[],
+  selectedDay: DayFilter,
+  selectedRouteDay: TripDay["day"] | null,
+): RouteFeatureCollection {
   const routeDays =
     selectedDay === "all" ? days : days.filter((day) => day.day === selectedDay);
+  const activeRouteDay = selectedDay === "all" ? selectedRouteDay : selectedDay;
+  const placeById = new globalThis.Map<string, TripPlace>();
+  places.forEach((place) => {
+    placeById.set(place.id, place);
+  });
+  const features: RouteFeatureCollection["features"] = [];
+
+  routeDays.forEach((day) => {
+    const coordinates =
+      day.route?.coordinates && day.route.coordinates.length >= 2
+        ? day.route.coordinates
+        : buildFallbackRouteCoordinates(day, placeById);
+
+    if (coordinates.length < 2) {
+      return;
+    }
+
+    features.push({
+      type: "Feature",
+      id: `day-${day.day}`,
+      properties: {
+        day: day.day,
+        active: activeRouteDay !== null && day.day === activeRouteDay,
+      },
+      geometry: {
+        type: "LineString",
+        coordinates,
+      },
+    });
+  });
 
   return {
     type: "FeatureCollection",
-    features: routeDays
-      .filter((day) => (day.route?.coordinates.length ?? 0) >= 2)
-      .map((day) => ({
-        type: "Feature",
-        id: `day-${day.day}`,
-        properties: {
-          day: day.day,
-          active: selectedDay !== "all" && day.day === selectedDay,
-        },
-        geometry: {
-          type: "LineString",
-          coordinates: day.route?.coordinates ?? [],
-        },
-      })),
+    features,
   };
+}
+
+function buildFallbackRouteCoordinates(
+  day: TripDay,
+  placeById: ReadonlyMap<string, TripPlace>,
+): [number, number][] {
+  return day.placeIds.flatMap((placeId) => {
+    const place = placeById.get(placeId);
+    if (!place || !isValidLngLat(place.lng, place.lat)) {
+      return [];
+    }
+
+    return [[place.lng, place.lat] as [number, number]];
+  });
 }
 
 function buildPlaceFeatureCollection(
@@ -1089,6 +1566,7 @@ function buildPlaceFeatureCollection(
             day: place.day,
             glyph: getMarkerGlyph(place.category),
             selected: place.id === selectedPlaceId,
+            muted: selectedPlaceId !== null && place.id !== selectedPlaceId,
           },
           geometry: {
             type: "Point",
@@ -1282,19 +1760,31 @@ function getRegionFocusPadding() {
 
   if (window.innerWidth < 768) {
     return {
-      top: 120,
-      right: 40,
-      bottom: 210,
-      left: 40,
+      top: 144,
+      right: 24,
+      bottom: 124,
+      left: 24,
     };
   }
 
   return {
-    top: 110,
-    right: 440,
-    bottom: 210,
-    left: 560,
+    top: 84,
+    right: 390,
+    bottom: 116,
+    left: 350,
   };
+}
+
+function getSelectedPlaceOffset(): [number, number] {
+  if (typeof window === "undefined") {
+    return [0, 0];
+  }
+
+  if (window.innerWidth < 1024) {
+    return [0, -96];
+  }
+
+  return [0, 0];
 }
 
 function getMarkerGlyph(category: TripPlace["category"]) {

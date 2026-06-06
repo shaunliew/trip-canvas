@@ -42,17 +42,17 @@ export function HotelBasePanel({
 }: HotelBasePanelProps) {
   return (
     <div>
-      <p className="text-xs font-black uppercase tracking-[0.28em] text-teal-200">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-teal-200">
         Hotel base
       </p>
-      <h2 className="mt-2 text-2xl font-black tracking-tight text-white">
+      <h2 className="mt-1 text-xl font-black leading-6 tracking-tight text-white">
         Where should the trip orbit from?
       </h2>
-      <p className="mt-3 text-sm font-semibold leading-6 text-slate-300">
+      <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-slate-300">
         The agent will score base areas against {placeCount} mapped places before planning the route.
       </p>
 
-      <div className="mt-6 flex flex-wrap gap-2.5">
+      <div className="mt-3 flex flex-wrap gap-1.5">
         {HOTEL_BASE_CHIPS.map((chip) => {
           const active = selectedChips.includes(chip.id);
 
@@ -63,7 +63,7 @@ export function HotelBasePanel({
               disabled={isRunning}
               onClick={() => onToggleChip(chip.id)}
               className={[
-                "rounded-full border px-4 py-2.5 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-60",
+                "rounded-full border px-2.5 py-1.5 text-[11px] font-black transition disabled:cursor-not-allowed disabled:opacity-60",
                 active
                   ? "border-amber-200/60 bg-amber-200/18 text-amber-100"
                   : "border-white/10 bg-white/8 text-slate-200 hover:bg-white/12",
@@ -75,24 +75,24 @@ export function HotelBasePanel({
         })}
       </div>
 
-      <label className="mt-5 block">
-        <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
+      <label className="mt-3 block">
+        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
           Hotel notes
         </span>
         <textarea
           value={notes}
           onChange={(event) => onNotesChange(event.target.value)}
           disabled={isRunning}
-          rows={3}
+          rows={2}
           placeholder="Optional: room style, loyalty, budget cap, avoid areas..."
-          className="mt-3 min-h-[82px] w-full resize-none rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-semibold leading-6 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-200/60 disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-1.5 min-h-[56px] w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-xs font-semibold leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-amber-200/60 disabled:cursor-not-allowed disabled:opacity-60"
         />
       </label>
 
       {progressItems.length > 0 || elapsedSeconds !== null ? (
-        <div className="mt-5 space-y-3">
+        <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
               Progress
             </p>
             {elapsedSeconds !== null ? (
@@ -105,14 +105,14 @@ export function HotelBasePanel({
             <div
               key={item.id}
               className={[
-                "rounded-xl border px-4 py-3",
+                "rounded-lg border px-3 py-2",
                 item.tone === "success"
                   ? "border-teal-200/25 bg-teal-300/10"
                   : "border-white/10 bg-white/8",
               ].join(" ")}
             >
-              <p className="text-sm font-black text-white">{item.title}</p>
-              <p className="mt-1 text-sm font-semibold leading-5 text-slate-300">
+              <p className="text-xs font-black text-white">{item.title}</p>
+              <p className="mt-1 line-clamp-2 text-xs font-semibold leading-4 text-slate-300">
                 {item.detail}
               </p>
             </div>
@@ -124,7 +124,7 @@ export function HotelBasePanel({
         type="button"
         disabled={isRunning}
         onClick={onContinue}
-        className="mt-7 h-12 w-full rounded-xl border border-amber-100/30 bg-amber-200 px-5 text-sm font-black uppercase tracking-[0.16em] text-slate-950 shadow-xl shadow-amber-950/25 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-4 h-9 w-full rounded-lg border border-amber-100/30 bg-amber-200 px-4 text-[11px] font-black uppercase tracking-[0.14em] text-slate-950 shadow-xl shadow-amber-950/25 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isRunning ? "Optimizing base" : "Optimize hotel base"}
       </button>

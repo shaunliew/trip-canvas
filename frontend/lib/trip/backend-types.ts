@@ -172,6 +172,17 @@ export type BookingResult = {
   is_mock_settlement?: boolean;
 };
 
+// Agentic-payment (x402/AP2) summary carried on the itinerary (spike_planner.PaymentContext).
+// Backend model is extra="allow", so additional keys may appear.
+export type PaymentContext = {
+  payment_protocol?: string; // e.g. "x402"
+  network?: string; // e.g. "base-sepolia"
+  asset?: string; // e.g. "USDC"
+  agent_payment_usd?: string; // string in the cache, e.g. "0.01"
+  mock_booking_only?: boolean;
+  [key: string]: unknown;
+};
+
 // One of the 3 hotel recommendations on the itinerary (from spike_planner.py).
 // Exactly one has is_best=true (the recommended_hotel / selected_hotel_id).
 export type HotelOption = {
@@ -183,6 +194,24 @@ export type HotelOption = {
   rationale?: string;
   tradeoffs?: string[];
   is_best: boolean;
+};
+
+// One time-blocked stop within an itinerary day (from spike_planner.DayStop).
+// Anchors carry place_name (a source place) or category "hotel"; supporting
+// stops have place_name null. Additive — legacy day payloads omit `stops`.
+export type DayStop = {
+  time_of_day: "morning" | "afternoon" | "evening";
+  name: string;
+  category:
+    | "attraction"
+    | "restaurant"
+    | "cafe"
+    | "hotel"
+    | "transport"
+    | "shopping"
+    | "other";
+  place_name?: string | null;
+  description?: string;
 };
 
 export type BackendTripPayload = unknown;

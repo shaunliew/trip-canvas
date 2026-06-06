@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test lib/trip/*.test.mjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.0",

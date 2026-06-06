@@ -5,6 +5,29 @@
       "day_number": 1,
       "date": "2026-06-10",
       "activities": "Morning: arrive at Tokyo Narita at 07:05 on the overnight Scoot nonstop from Singapore, take the rail transfer into Shiodome/Shimbashi, drop bags at The Royal Park Hotel Iconic Tokyo Shiodome, and ease into the day with coffee and a covered walk around Shiodome. Afternoon: head to Roppongi Hills for Grand Hyatt Tokyo as a polished indoor stop, treating it as an activity by lingering over its restaurants and elegant lobby-bar atmosphere, with optional spa-style downtime if access or a day package is available. Evening: stay in the Roppongi/Shimbashi corridor for a warming ramen dinner, then return to Shiodome for an early night after the flight.",
+      "stops": [
+        {
+          "time_of_day": "morning",
+          "name": "Hamarikyu Gardens",
+          "category": "attraction",
+          "place_name": null,
+          "description": "Stroll the tidal pond and matcha teahouse beside Shiodome to ease off the overnight flight."
+        },
+        {
+          "time_of_day": "afternoon",
+          "name": "Grand Hyatt Tokyo",
+          "category": "hotel",
+          "place_name": "Grand Hyatt Tokyo",
+          "description": "Linger over the Roppongi Hills hotel's restaurants and elegant lobby-bar atmosphere."
+        },
+        {
+          "time_of_day": "evening",
+          "name": "Tokyo Midtown",
+          "category": "shopping",
+          "place_name": null,
+          "description": "Wind down with dinner among Tokyo Midtown's restaurants a short walk from Roppongi."
+        }
+      ],
       "hotel": "The Royal Park Hotel Iconic Tokyo Shiodome",
       "narration": "Tokyo greets you through a veil of light rain, all glossy pavements and station chimes after the red-eye from Singapore. By evening, the city feels softer: warm broth, hotel lights above Shiodome, and the relief of being exactly where the rail lines make everything easy.",
       "weather_strategy": "Light rain makes this an indoor-and-covered arrival day, with hotel dining, lobby-bar ambience, and short rail hops prioritized over outdoor exploring."
@@ -13,6 +36,29 @@
       "day_number": 2,
       "date": "2026-06-11",
       "activities": "Morning: start slowly from Shiodome with a covered rail ride to Akasaka and a reserved late-morning visit to Harry Potter Cafe at Akasaka Biz Tower, enjoying the themed dining rooms before the lunch rush. Afternoon: continue by train to Akihabara for SANDO LAB TOKYO at Don Quijote Akihabara 1F, pairing a crisp fried sandwich with an easy indoor browse through Akihabara’s electronics, anime, and game shops. Evening: return toward Shimbashi/Ginza for ramen or izakaya-style comfort food within walking distance of the hotel.",
+      "stops": [
+        {
+          "time_of_day": "morning",
+          "name": "Harry Potter Cafe",
+          "category": "restaurant",
+          "place_name": "Harry Potter Cafe",
+          "description": "Reserved themed dining rooms at Akasaka Biz Tower before the lunch rush."
+        },
+        {
+          "time_of_day": "afternoon",
+          "name": "SANDO LAB TOKYO",
+          "category": "restaurant",
+          "place_name": "SANDO LAB TOKYO",
+          "description": "Crisp fried sandwich on Don Quijote Akihabara 1F, then browse the electronics district."
+        },
+        {
+          "time_of_day": "evening",
+          "name": "Mandarake Complex",
+          "category": "shopping",
+          "place_name": null,
+          "description": "Eight floors of anime and collectibles in Akihabara before a Ginza-side dinner."
+        }
+      ],
       "hotel": "The Royal Park Hotel Iconic Tokyo Shiodome",
       "narration": "Rain taps at the city while you slip from spellbook interiors to neon shopfronts, Tokyo turning the weather into part of the mood. The day tastes like buttered toast, fried sando crunch, and a steaming bowl at night.",
       "weather_strategy": "Heavier rain is absorbed by indoor cafe, food, and shopping stops connected by efficient train routes."
@@ -21,6 +67,29 @@
       "day_number": 3,
       "date": "2026-06-12",
       "activities": "Morning: keep the umbrella handy and travel west to Kokubunji for Popo, verifying the exact venue before setting out and aiming for the 11:30–14:30 lunch window. Afternoon: return across town at an unhurried pace, using Shiodome as a reset point for rest, convenience-store snacks, or an indoor onsen-style bathhouse/spa option nearby if you want warm-water downtime. Evening: enjoy a walkable Shimbashi or Ginza dinner, favoring ramen counters or cozy restaurants close enough to retreat quickly if the rain strengthens.",
+      "stops": [
+        {
+          "time_of_day": "morning",
+          "name": "Popo",
+          "category": "restaurant",
+          "place_name": "Popo",
+          "description": "Aim for the 11:30-14:30 lunch window in Kokubunji, confirming the venue before setting out."
+        },
+        {
+          "time_of_day": "afternoon",
+          "name": "Ginza Six",
+          "category": "shopping",
+          "place_name": null,
+          "description": "Return east for the rooftop garden and depachika food hall at Ginza Six."
+        },
+        {
+          "time_of_day": "evening",
+          "name": "Caretta Shiodome",
+          "category": "restaurant",
+          "place_name": null,
+          "description": "Sky-high dinner at Caretta Shiodome's 46th-floor restaurants beside the hotel."
+        }
+      ],
       "hotel": "The Royal Park Hotel Iconic Tokyo Shiodome",
       "narration": "This is the slow Tokyo day: train windows streaked with rain, a small restaurant search, and the satisfaction of finding warmth at the end of the line. Back near Shiodome, the city compresses into lanterns, steam, and the easy rhythm of walking home.",
       "weather_strategy": "Because rain continues, the farthest and most ambiguous food stop is scheduled as a lunch mission, while the rest of the day stays flexible and close to transit."
@@ -29,6 +98,29 @@
       "day_number": 4,
       "date": "2026-06-13",
       "activities": "Morning: check out of The Royal Park Hotel Iconic Tokyo Shiodome, store luggage if needed, and ride to Ariake for Tokyo Dream Park, saving this theme-park-style entertainment complex for the lightest-rain day of the trip. Afternoon: focus on its indoor Doraemon exhibition areas, rotating 7th–8th floor event spaces, event-limited goods, and, if the drizzle eases, a short visit to the free 6th-floor rooftop terrace with Doraemon figures. Evening: return to Shiodome/Shimbashi to collect luggage, have a final ramen or casual dinner if timing allows, and begin onward airport or next-destination logistics.",
+      "stops": [
+        {
+          "time_of_day": "morning",
+          "name": "Tokyo Dream Park",
+          "category": "attraction",
+          "place_name": "Tokyo Dream Park",
+          "description": "Indoor Doraemon exhibition and rooftop terrace, saved for the lightest-rain day."
+        },
+        {
+          "time_of_day": "afternoon",
+          "name": "teamLab Planets TOKYO",
+          "category": "attraction",
+          "place_name": null,
+          "description": "Immersive digital-art world a short Yurikamome ride away in Toyosu."
+        },
+        {
+          "time_of_day": "evening",
+          "name": "Ariake Garden",
+          "category": "shopping",
+          "place_name": null,
+          "description": "Final dinner and onsen-style downtime at Ariake Garden before airport logistics."
+        }
+      ],
       "hotel": null,
       "narration": "The last day opens like a bright comic panel despite the drizzle, with Doraemon blues and rooftop air above Ariake. Tokyo sends you off playfully: one more train ride, one more bowl, one more glimpse of wet streets shining under evening lights.",
       "weather_strategy": "Tokyo Dream Park is placed on the lighter-rain departure day because its indoor exhibits can handle showers, while the rooftop terrace is kept optional for any clearer break."

@@ -2,6 +2,8 @@ import {
   PLACE_CATEGORIES,
   type PlaceCategory,
   type TripDay,
+  type TripDayStop,
+  type TripDayStopCategory,
   type TripDestination,
   type TripExperience,
   type TripPlace,
@@ -41,7 +43,10 @@ export function normalizeTripFromBackend(raw: unknown): TripExperience {
 }
 
 export function normalizePlaceCategory(value: unknown): PlaceCategory {
-  const normalized = readString(value).toLowerCase().trim().replace(/[\s_]+/g, "-");
+  const normalized = readString(value)
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_]+/g, "-");
 
   if (CATEGORY_SET.has(normalized)) {
     return normalized as PlaceCategory;
@@ -65,8 +70,15 @@ function normalizeStructuredTrip(record: AnyRecord): TripExperience {
   const days = normalizeDays(dayRecords, places);
   const destination = normalizeDestination(record.destination);
   const title = readString(record.title) || DEFAULT_TRIP.title;
-  const datesLabel = readString(record.datesLabel) || readString(record.dates) || DEFAULT_TRIP.datesLabel;
-  const id = readString(record.id) || readString(record.tripId) || slugify(title) || DEFAULT_TRIP.id;
+  const datesLabel =
+    readString(record.datesLabel) ||
+    readString(record.dates) ||
+    DEFAULT_TRIP.datesLabel;
+  const id =
+    readString(record.id) ||
+    readString(record.tripId) ||
+    slugify(title) ||
+    DEFAULT_TRIP.id;
   const sourceReels = normalizeSourceReels(record.sourceReels, places);
   const hotelBase = normalizeHotelBase(record.hotelBase ?? record.hotel_base);
   const weatherAdjustments = normalizeWeatherAdjustments(
@@ -86,7 +98,9 @@ function normalizeStructuredTrip(record: AnyRecord): TripExperience {
   };
 }
 
-function tryNormalizeCompositePlannerTrip(record: AnyRecord): TripExperience | null {
+function tryNormalizeCompositePlannerTrip(
+  record: AnyRecord,
+): TripExperience | null {
   const plannerRecord = asRecord(
     record.itinerary ?? record.plannerOutput ?? record.planner_output,
   );
@@ -121,10 +135,15 @@ function tryNormalizeCompositePlannerTrip(record: AnyRecord): TripExperience | n
     ...summaryByName.keys(),
     ...sourcePlaceNames,
   ]);
-  const plannedPlaceNames = new Set([...summaryByName.keys(), ...sourcePlaceNames]);
+  const plannedPlaceNames = new Set([
+    ...summaryByName.keys(),
+    ...sourcePlaceNames,
+  ]);
 
   if (dayByName.size === 0) {
-    throw new Error("Composite planner payload could not match places to days.");
+    throw new Error(
+      "Composite planner payload could not match places to days.",
+    );
   }
 
   const places = extractedPlaces
@@ -148,27 +167,42 @@ function tryNormalizeCompositePlannerTrip(record: AnyRecord): TripExperience | n
           plannerSummary ||
           readString(placeRecord?.summary) ||
           readString(placeRecord?.evidence_caption_quote),
-        source_url: readString(plannerInfo?.source_url) || readString(placeRecord?.source_url),
+        source_url:
+          readString(plannerInfo?.source_url) ||
+          readString(placeRecord?.source_url),
       };
 
       return normalizePlace(merged, index, new Map());
     })
     .filter((place): place is TripPlace => Boolean(place));
 
-  if (places.length === 0 || places.some((place) => !dayByName.has(place.name.toLowerCase()))) {
-    throw new Error("Composite planner payload did not include enough matched valid places.");
+  if (
+    places.length === 0 ||
+    places.some((place) => !dayByName.has(place.name.toLowerCase()))
+  ) {
+    throw new Error(
+      "Composite planner payload did not include enough matched valid places.",
+    );
   }
 
-  const hotelBase = normalizeHotelBase(record.hotelBase ?? record.hotel_base ?? plannerRecord.hotel_base);
+  const hotelBase = normalizeHotelBase(
+    record.hotelBase ?? record.hotel_base ?? plannerRecord.hotel_base,
+  );
   const weatherAdjustments = normalizeWeatherAdjustments(
     plannerRecord.weather_adjustments ?? plannerRecord.weatherAdjustments,
   );
 
   return {
     id: readString(record.id) || readString(record.tripId) || DEFAULT_TRIP.id,
-    title: readString(plannerRecord.title) || readString(record.title) || DEFAULT_TRIP.title,
+    title:
+      readString(plannerRecord.title) ||
+      readString(record.title) ||
+      DEFAULT_TRIP.title,
     destination: normalizeDestination(record.destination),
-    datesLabel: readString(record.datesLabel) || readString(record.dates) || DEFAULT_TRIP.datesLabel,
+    datesLabel:
+      readString(record.datesLabel) ||
+      readString(record.dates) ||
+      DEFAULT_TRIP.datesLabel,
     days: normalizeDays(plannerDays, places),
     places,
     ...(hotelBase ? { hotelBase } : {}),
@@ -183,7 +217,9 @@ function normalizeDestination(destination: unknown): TripDestination {
 
   return {
     city: readString(destinationRecord?.city) || DEFAULT_TRIP.destination.city,
-    country: readString(destinationRecord?.country) || DEFAULT_TRIP.destination.country,
+    country:
+      readString(destinationRecord?.country) ||
+      DEFAULT_TRIP.destination.country,
     center: center ?? DEFAULT_TRIP.destination.center,
     zoom: zoom ?? DEFAULT_TRIP.destination.zoom,
   };
@@ -204,11 +240,21 @@ function normalizePlace(
   const lat = readFiniteNumber(place.lat);
   const lng = readFiniteNumber(place.lng);
 
-  if (!name || lat === null || lng === null || !isValidLat(lat) || !isValidLng(lng)) {
+  if (
+    !name ||
+    lat === null ||
+    lng === null ||
+    !isValidLat(lat) ||
+    !isValidLng(lng)
+  ) {
     return null;
   }
 
-  const id = readString(place.id) || readString(place.place_id) || slugify(name) || `place-${index + 1}`;
+  const id =
+    readString(place.id) ||
+    readString(place.place_id) ||
+    slugify(name) ||
+    `place-${index + 1}`;
   const category = normalizePlaceCategory(place.category ?? place.type);
   const day =
     readDayNumber(place.day) ??
@@ -231,15 +277,25 @@ function normalizePlace(
     ...(readString(place.address ?? place.formatted_address)
       ? { address: readString(place.address ?? place.formatted_address) }
       : {}),
-    ...(readString(place.evidenceQuote ?? place.evidence_quote ?? place.evidence_caption_quote)
+    ...(readString(
+      place.evidenceQuote ??
+        place.evidence_quote ??
+        place.evidence_caption_quote,
+    )
       ? {
           evidenceQuote: readString(
-            place.evidenceQuote ?? place.evidence_quote ?? place.evidence_caption_quote,
+            place.evidenceQuote ??
+              place.evidence_quote ??
+              place.evidence_caption_quote,
           ),
         }
       : {}),
     ...(readString(place.plannerSummary ?? place.planner_summary)
-      ? { plannerSummary: readString(place.plannerSummary ?? place.planner_summary) }
+      ? {
+          plannerSummary: readString(
+            place.plannerSummary ?? place.planner_summary,
+          ),
+        }
       : {}),
     ...(readString(place.dayPlanText ?? place.day_plan_text)
       ? { dayPlanText: readString(place.dayPlanText ?? place.day_plan_text) }
@@ -248,12 +304,70 @@ function normalizePlace(
       ? { sourceUrl: readString(place.sourceUrl ?? place.source_url) }
       : {}),
     ...(readString(place.sourceReelUrl ?? place.source_reel_url)
-      ? { sourceReelUrl: readString(place.sourceReelUrl ?? place.source_reel_url) }
+      ? {
+          sourceReelUrl: readString(
+            place.sourceReelUrl ?? place.source_reel_url,
+          ),
+        }
       : {}),
     ...(readFiniteNumber(place.confidence) !== null
       ? { confidence: readFiniteNumber(place.confidence) as number }
       : {}),
   };
+}
+
+const STOP_CATEGORY_SET = new Set<TripDayStopCategory>([
+  "attraction",
+  "restaurant",
+  "cafe",
+  "hotel",
+  "transport",
+  "shopping",
+  "other",
+]);
+const STOP_TIME_SET = new Set<TripDayStop["timeOfDay"]>([
+  "morning",
+  "afternoon",
+  "evening",
+]);
+
+function normalizeStops(rawStops: unknown): TripDayStop[] {
+  return readArray(rawStops)
+    .map((rawStop): TripDayStop | null => {
+      const stop = asRecord(rawStop);
+      if (!stop) return null;
+      const name = readString(stop.name);
+      if (!name) return null;
+
+      const rawTime = readString(
+        stop.time_of_day ?? stop.timeOfDay,
+      ).toLowerCase();
+      const timeOfDay = (
+        STOP_TIME_SET.has(rawTime as TripDayStop["timeOfDay"])
+          ? rawTime
+          : "morning"
+      ) as TripDayStop["timeOfDay"];
+
+      const rawCategory = readString(stop.category).toLowerCase();
+      const category = (
+        STOP_CATEGORY_SET.has(rawCategory as TripDayStopCategory)
+          ? rawCategory
+          : "other"
+      ) as TripDayStopCategory;
+
+      const placeName = readString(stop.place_name ?? stop.placeName);
+      const description = readString(stop.description);
+
+      return {
+        timeOfDay,
+        name,
+        category,
+        isAnchor: Boolean(placeName) || category === "hotel",
+        ...(placeName ? { placeName } : {}),
+        ...(description ? { description } : {}),
+      };
+    })
+    .filter((stop): stop is TripDayStop => stop !== null);
 }
 
 function normalizeDays(rawDays: unknown[], places: TripPlace[]): TripDay[] {
@@ -267,7 +381,8 @@ function normalizeDays(rawDays: unknown[], places: TripPlace[]): TripDay[] {
   const days = rawDays
     .map((rawDay, index) => {
       const dayRecord = asRecord(rawDay);
-      const day = readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
+      const day =
+        readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
       const rawPlaceIds = readArray(dayRecord?.placeIds ?? dayRecord?.place_ids)
         .map((placeId) => readString(placeId))
         .filter(Boolean);
@@ -277,8 +392,11 @@ function normalizeDays(rawDays: unknown[], places: TripPlace[]): TripDay[] {
       const derivedPlaceIds = places
         .filter((place) => place.day === day)
         .map((place) => place.id);
-      const placeIds = uniqueStrings(matchedPlaceIds.length > 0 ? matchedPlaceIds : derivedPlaceIds);
+      const placeIds = uniqueStrings(
+        matchedPlaceIds.length > 0 ? matchedPlaceIds : derivedPlaceIds,
+      );
       const route = normalizeRoute(dayRecord?.route);
+      const stops = normalizeStops(dayRecord?.stops);
 
       return {
         day,
@@ -289,9 +407,16 @@ function normalizeDays(rawDays: unknown[], places: TripPlace[]): TripDay[] {
           readString(dayRecord?.activities) ||
           "",
         placeIds,
+        ...(stops.length > 0 ? { stops } : {}),
         ...(route ? { route } : {}),
-        ...(readString(dayRecord?.weather_strategy ?? dayRecord?.weatherStrategy)
-          ? { weatherStrategy: readString(dayRecord?.weather_strategy ?? dayRecord?.weatherStrategy) }
+        ...(readString(
+          dayRecord?.weather_strategy ?? dayRecord?.weatherStrategy,
+        )
+          ? {
+              weatherStrategy: readString(
+                dayRecord?.weather_strategy ?? dayRecord?.weatherStrategy,
+              ),
+            }
           : {}),
       };
     })
@@ -307,7 +432,9 @@ function normalizeDays(rawDays: unknown[], places: TripPlace[]): TripDay[] {
       day,
       title: `Day ${day}`,
       summary: "",
-      placeIds: places.filter((place) => place.day === day).map((place) => place.id),
+      placeIds: places
+        .filter((place) => place.day === day)
+        .map((place) => place.id),
     }));
 }
 
@@ -320,13 +447,17 @@ function normalizeRoute(rawRoute: unknown): TripRoute | null {
 
   const coordinates = readArray(route.coordinates)
     .map(readLngLatCoordinate)
-    .filter((coordinate): coordinate is [number, number] => Boolean(coordinate));
+    .filter((coordinate): coordinate is [number, number] =>
+      Boolean(coordinate),
+    );
 
   if (coordinates.length < 2) {
     return null;
   }
 
-  const durationMinutes = readFiniteNumber(route.durationMinutes ?? route.duration_minutes);
+  const durationMinutes = readFiniteNumber(
+    route.durationMinutes ?? route.duration_minutes,
+  );
   const distanceKm = readFiniteNumber(route.distanceKm ?? route.distance_km);
 
   return {
@@ -336,8 +467,13 @@ function normalizeRoute(rawRoute: unknown): TripRoute | null {
   };
 }
 
-function normalizeSourceReels(rawSourceReels: unknown, places: TripPlace[]): TripSourceReel[] {
-  const placeByName = new Map(places.map((place) => [place.name.toLowerCase(), place.id]));
+function normalizeSourceReels(
+  rawSourceReels: unknown,
+  places: TripPlace[],
+): TripSourceReel[] {
+  const placeByName = new Map(
+    places.map((place) => [place.name.toLowerCase(), place.id]),
+  );
 
   return readArray(rawSourceReels)
     .map((sourceReel, index) => {
@@ -348,7 +484,9 @@ function normalizeSourceReels(rawSourceReels: unknown, places: TripPlace[]): Tri
         return null;
       }
 
-      const extractedNames = readArray(reel?.extractedPlaces ?? reel?.extracted_places)
+      const extractedNames = readArray(
+        reel?.extractedPlaces ?? reel?.extracted_places,
+      )
         .map((placeName) => readString(placeName).toLowerCase())
         .filter(Boolean);
 
@@ -356,7 +494,11 @@ function normalizeSourceReels(rawSourceReels: unknown, places: TripPlace[]): Tri
         id: readString(reel?.id) || `reel-${index + 1}`,
         url,
         ...(readString(reel?.thumbnailUrl ?? reel?.thumbnail_url)
-          ? { thumbnailUrl: readString(reel?.thumbnailUrl ?? reel?.thumbnail_url) }
+          ? {
+              thumbnailUrl: readString(
+                reel?.thumbnailUrl ?? reel?.thumbnail_url,
+              ),
+            }
           : {}),
         extractedPlaceIds: extractedNames
           .map((placeName) => placeByName.get(placeName))
@@ -393,7 +535,9 @@ function normalizeHotelBase(rawHotelBase: unknown) {
       };
     })
     .filter((base) => base.id && base.name);
-  const hotels = readArray(hotelBase.hotel_candidates ?? hotelBase.hotelCandidates)
+  const hotels = readArray(
+    hotelBase.hotel_candidates ?? hotelBase.hotelCandidates,
+  )
     .map(asRecord)
     .filter((hotel): hotel is AnyRecord => Boolean(hotel));
   const hotelEntries = hotels
@@ -424,10 +568,16 @@ function normalizeHotelBase(rawHotelBase: unknown) {
     })
     .filter((hotel) => hotel.candidate.id && hotel.candidate.name);
   const hotelCandidates = hotelEntries.map((hotel) => hotel.candidate);
-  const selectedBase = asRecord(hotelBase.selected_base ?? hotelBase.selectedBase);
+  const selectedBase = asRecord(
+    hotelBase.selected_base ?? hotelBase.selectedBase,
+  );
   const selectedBaseId = readString(selectedBase?.id);
-  const selectedHotelId = readString(hotelBase.selected_hotel_id ?? hotelBase.selectedHotelId);
-  const selectedHotel = hotelEntries.find((hotel) => hotel.candidate.id === selectedHotelId) ?? null;
+  const selectedHotelId = readString(
+    hotelBase.selected_hotel_id ?? hotelBase.selectedHotelId,
+  );
+  const selectedHotel =
+    hotelEntries.find((hotel) => hotel.candidate.id === selectedHotelId) ??
+    null;
   const selectedBaseName = readString(selectedBase?.name);
   const selectedHotelName = readString(selectedHotel?.candidate.name);
 
@@ -464,7 +614,9 @@ function normalizeWeatherAdjustments(rawAdjustments: unknown) {
       movedPlaces: readArray(adjustment.moved_places ?? adjustment.movedPlaces)
         .map(readString)
         .filter(Boolean),
-      weatherSummary: readString(adjustment.weather_summary ?? adjustment.weatherSummary),
+      weatherSummary: readString(
+        adjustment.weather_summary ?? adjustment.weatherSummary,
+      ),
     }))
     .filter((adjustment) => adjustment.date && adjustment.reason);
 }
@@ -496,7 +648,8 @@ function buildDayReferenceMap(rawDays: unknown[]): Map<string, number> {
 
   rawDays.forEach((rawDay, index) => {
     const dayRecord = asRecord(rawDay);
-    const day = readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
+    const day =
+      readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
     const placeIds = readArray(dayRecord?.placeIds ?? dayRecord?.place_ids);
 
     placeIds.forEach((placeId) => {
@@ -511,13 +664,17 @@ function buildDayReferenceMap(rawDays: unknown[]): Map<string, number> {
   return dayReferenceMap;
 }
 
-function buildPlannerDayByName(rawDays: unknown[], placeNames: string[]): Map<string, number> {
+function buildPlannerDayByName(
+  rawDays: unknown[],
+  placeNames: string[],
+): Map<string, number> {
   const dayByName = new Map<string, number>();
   const uniquePlaceNames = uniqueStrings(placeNames.filter(Boolean));
 
   rawDays.forEach((rawDay, index) => {
     const dayRecord = asRecord(rawDay);
-    const day = readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
+    const day =
+      readDayNumber(dayRecord?.day ?? dayRecord?.day_number) ?? index + 1;
     const dayText = [
       dayRecord?.title,
       dayRecord?.summary,
@@ -538,7 +695,10 @@ function buildPlannerDayByName(rawDays: unknown[], placeNames: string[]): Map<st
   return dayByName;
 }
 
-function buildPlannerDayTextByName(rawDays: unknown[], placeNames: string[]): Map<string, string> {
+function buildPlannerDayTextByName(
+  rawDays: unknown[],
+  placeNames: string[],
+): Map<string, string> {
   const dayTextByName = new Map<string, string>();
   const uniquePlaceNames = uniqueStrings(placeNames.filter(Boolean));
 
@@ -569,14 +729,18 @@ function readCenter(value: unknown): [number, number] | null {
   if (Array.isArray(value) && value.length >= 2) {
     const lng = readFiniteNumber(value[0]);
     const lat = readFiniteNumber(value[1]);
-    return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat) ? [lng, lat] : null;
+    return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat)
+      ? [lng, lat]
+      : null;
   }
 
   const center = asRecord(value);
   const lat = readFiniteNumber(center?.lat);
   const lng = readFiniteNumber(center?.lng);
 
-  return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat) ? [lng, lat] : null;
+  return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat)
+    ? [lng, lat]
+    : null;
 }
 
 function readLngLatCoordinate(value: unknown): [number, number] | null {
@@ -587,7 +751,9 @@ function readLngLatCoordinate(value: unknown): [number, number] | null {
   const lng = readFiniteNumber(value[0]);
   const lat = readFiniteNumber(value[1]);
 
-  return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat) ? [lng, lat] : null;
+  return lng !== null && lat !== null && isValidLng(lng) && isValidLat(lat)
+    ? [lng, lat]
+    : null;
 }
 
 function asRecord(value: unknown): AnyRecord | null {

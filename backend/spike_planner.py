@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 from datetime import date
 from typing import Literal, Optional
 
@@ -140,10 +141,35 @@ class EnrichedContext(BaseModel):
     weather_report: Optional[WeatherReport] = None  # injected by pipeline post-enricher
 
 
+class DayStop(BaseModel):
+    """One time-blocked stop within a day (target 3 per day).
+
+    Two kinds of stop:
+      - ANCHOR (the "main" markers): either a reel-extracted source place
+        (`place_name` == a `source_places` entry, `category` mirrors the place)
+        or the trip hotel (`category == "hotel"`, `place_name is None`).
+      - SUPPORTING: a real nearby spot from web research (`place_name is None`,
+        not the hotel) used to fill the day to ~3 stops.
+
+    Additive: cached itineraries written before this field still validate —
+    `ItineraryDay.stops` defaults to []. The 5 reel places remain the only
+    geocoded map pins; supporting stops enrich the day panel, not the map.
+    """
+
+    time_of_day: Literal["morning", "afternoon", "evening"]
+    name: str
+    category: Literal[
+        "attraction", "restaurant", "cafe", "hotel", "transport", "shopping", "other"
+    ]
+    place_name: Optional[str] = None  # set IFF this stop IS a source place; None = supporting/hotel
+    description: str = ""             # one user-facing sentence
+
+
 class ItineraryDay(BaseModel):
     day_number: int
     date: str
     activities: str              # morning / afternoon / evening in one string
+    stops: list[DayStop] = Field(default_factory=list)  # ~3 time-blocked stops; [] = legacy cache
     hotel: Optional[str] = None
     narration: str
     weather_strategy: str = ""
@@ -174,6 +200,25 @@ class HotelOption(BaseModel):
     is_best: bool = False
 
 
+class PaymentContext(BaseModel):
+    """Agentic-payment (x402/AP2) summary surfaced alongside the itinerary.
+
+    Owned by the agentic-payment work (spike_agentic_payments.py / hotel_base);
+    modeled here ONLY so it survives ItineraryOutput.model_dump() and reaches the
+    frontend via /demo-cache + /itinerary instead of being silently dropped.
+    extra="allow" keeps any future keys Zhi Hao adds intact; all fields are
+    optional/defaulted so an absent payment_context stays None.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    payment_protocol: str = "x402"
+    network: str = ""
+    asset: str = ""
+    agent_payment_usd: str = ""   # string in the cache (e.g. "0.01")
+    mock_booking_only: bool = True
+
+
 class ItineraryOutput(BaseModel):
     """narrator_agent output — final structured itinerary."""
 
@@ -190,6 +235,7 @@ class ItineraryOutput(BaseModel):
     weather_report: Optional[WeatherReport] = None  # injected from weather_agent (Open-Meteo); None = unavailable
     weather_adjustments: list[WeatherAdjustment] = Field(default_factory=list)
     bookings: Optional[BookingResult] = None         # injected from booking_agent (deep links + AP2/x402 settlement); None = unavailable
+    payment_context: Optional[PaymentContext] = None  # agentic-payment summary (x402/AP2); carried from hotel_base. None = unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +498,19 @@ You are a travel narrator. Produce a day-by-day itinerary as ItineraryOutput.
 - Assign places to days by proximity and logical order.
 - `activities` covers morning, afternoon, and evening in one paragraph.
   Include flight day logistics on the arrival/departure days if flight info is available.
+- `stops` MUST contain EXACTLY 3 DayStop entries per day — one each with
+  time_of_day "morning", "afternoon", and "evening" (no duplicate time_of_day).
+  * ANCHOR stops are the main markers: the source place(s) assigned to that day
+    (set `place_name` to the EXACT source place name, pick the matching category)
+    and/or the trip hotel (category "hotel", `place_name` = null).
+  * Every source place MUST appear as an anchor stop on EXACTLY ONE day across
+    the whole trip — never omit one, never repeat it on two days.
+  * Fill the remaining slots with SUPPORTING stops: real, nearby places that fit
+    the day's neighbourhood (a meal spot, cafe, museum, market, or landmark).
+    Set their `place_name` to null. Do NOT invent fake venues — prefer
+    well-known real places near the anchor.
+  * `stops` must stay consistent with the `activities` paragraph and `description`
+    is one short user-facing sentence per stop.
 - `narration` is a warm, vivid 2-3 sentence micro-story for the day.
 - For places with category "hotel": describe their restaurants, lobby bar, spa, or rooftop
   as a specific activity — do NOT merely use them as a neighbourhood landmark.
@@ -776,6 +835,18 @@ def _validate(
         and all(d.hotel == output.recommended_hotel for d in non_checkout_days)
         and (last_day is None or last_day.hotel is None)
     )
+    # Gate 7+8: structured stops. Each day shows >= 2 stops (the whole point — never
+    # "one place per day"), each with a distinct time_of_day. Every source place is
+    # an anchor stop exactly once across the trip (count-based, so duplicates fail).
+    stop_counts = [len(d.stops) for d in output.days]
+    stops_min_two = all(n >= 2 for n in stop_counts)
+    unique_times = all(
+        len({s.time_of_day for s in d.stops}) == len(d.stops) for d in output.days
+    )
+    anchor_counts = Counter(
+        s.place_name for d in output.days for s in d.stops if s.place_name
+    )
+    coverage_exact_once = anchor_counts == Counter(expected_names)
     criteria: list[tuple[str, bool]] = [
         (
             "Gate 1+2: live search count (places+hotel[+flights]; weather is separate agent) + coverage — verified during run",
@@ -800,6 +871,14 @@ def _validate(
         (
             f"Gate 6: single hotel consistent + checkout-day null — hotel='{output.recommended_hotel}'",
             hotel_consistent,
+        ),
+        (
+            f"Gate 7: each day has >= 2 stops with distinct time_of_day — got {stop_counts}",
+            stops_min_two and unique_times,
+        ),
+        (
+            f"Gate 8: source places anchored exactly once across stops — got {dict(anchor_counts)}",
+            coverage_exact_once,
         ),
     ]
     all_pass = True

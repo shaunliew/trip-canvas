@@ -6,6 +6,7 @@ import { BottomPlaceRail } from "@/components/trip/BottomPlaceRail";
 import { LeftTripPanel } from "@/components/trip/LeftTripPanel";
 import { RightTripPanel, type RightPanelTab } from "@/components/trip/RightTripPanel";
 import { SelectedPlaceCard } from "@/components/trip/SelectedPlaceCard";
+import { readPublicMapboxToken } from "@/lib/trip/env";
 import type {
   CategoryFilter,
   DayFilter,
@@ -42,7 +43,7 @@ export function TripCanvasShell({
   onTogglePlaceLock,
   onRequestRegenerateDay,
 }: TripCanvasShellProps) {
-  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const mapboxToken = readPublicMapboxToken();
   const activeHotelBase = hotelBase ?? trip.hotelBase;
   const [selectedDay, setSelectedDay] = useState<DayFilter>("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
@@ -52,6 +53,10 @@ export function TripCanvasShell({
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>(
     rightPanel ? "agent-run" : "place-intel",
   );
+  const [routePreviewPlaceId, setRoutePreviewPlaceId] = useState<string | null>(
+    trip.places[0]?.id ?? null,
+  );
+  const [mobileIntelOpen, setMobileIntelOpen] = useState(false);
 
   const categories = useMemo(
     () => Array.from(new Set(trip.places.map((place) => place.category))) as PlaceCategory[],
@@ -86,6 +91,7 @@ export function TripCanvasShell({
     () => visiblePlaces.find((place) => place.id === selectedPlaceId) ?? null,
     [selectedPlaceId, visiblePlaces],
   );
+  const selectedRouteDay = selectedDay === "all" ? selectedPlace?.day ?? null : null;
   const renderedRightPanel =
     typeof rightPanel === "function"
       ? rightPanel({
@@ -113,6 +119,7 @@ export function TripCanvasShell({
   const handleSelectDay = useCallback((day: DayFilter) => {
     setSelectedDay(day);
     setActiveCategory("all");
+    setRoutePreviewPlaceId(null);
   }, []);
 
   const handleSelectCategory = useCallback((category: CategoryFilter) => {
@@ -121,11 +128,35 @@ export function TripCanvasShell({
 
   const handleSelectPlace = useCallback((placeId: string) => {
     setSelectedPlaceId(placeId);
+    setRoutePreviewPlaceId(placeId);
+    setMobileIntelOpen(false);
     setRightPanelTab("place-intel");
   }, []);
 
   const handleViewIntel = useCallback(() => {
     setRightPanelTab("place-intel");
+    setMobileIntelOpen(true);
+  }, []);
+
+  const handlePreviewRoute = useCallback(
+    (placeId: string) => {
+      const place = trip.places.find((candidate) => candidate.id === placeId) ?? null;
+      if (!place) {
+        return;
+      }
+
+      setSelectedDay(place.day);
+      setActiveCategory("all");
+      setSelectedPlaceId(placeId);
+      setRoutePreviewPlaceId(placeId);
+      setMobileIntelOpen(true);
+      setRightPanelTab("place-intel");
+    },
+    [trip.places],
+  );
+
+  const handleCloseMobileIntel = useCallback(() => {
+    setMobileIntelOpen(false);
   }, []);
 
   useEffect(() => {
@@ -139,20 +170,21 @@ export function TripCanvasShell({
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#06070a] text-white">
+    <main className="relative min-h-screen overflow-hidden bg-[#081016] text-white">
       <TripMap
         mapboxToken={mapboxToken}
         center={mapCenter}
         initialZoom={trip.destination.zoom}
         days={trip.days}
         selectedDay={selectedDay}
+        selectedRouteDay={selectedRouteDay}
         places={visiblePlaces}
         selectedPlace={selectedPlace}
         hotelBase={activeHotelBase}
         onSelectPlace={handleSelectPlace}
       />
       {dataNotice ? (
-        <div className="pointer-events-none absolute right-3 top-3 rounded-full border border-amber-200/30 bg-slate-950/[0.72] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-100 shadow-2xl shadow-black/30 backdrop-blur-xl md:right-5 md:top-5">
+        <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-full border border-amber-200/30 bg-[#101821]/[0.76] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100 shadow-2xl shadow-black/30 backdrop-blur-xl lg:right-[404px]">
           {dataNotice}
         </div>
       ) : null}
@@ -170,10 +202,15 @@ export function TripCanvasShell({
         activeTab={rightPanelTab}
         agentPanelContent={renderedRightPanel}
         days={trip.days}
+        places={trip.places}
         selectedPlace={selectedPlace}
+        routePreviewPlaceId={routePreviewPlaceId}
+        mobileIntelOpen={mobileIntelOpen}
         lockedPlaceIds={lockedPlaceIds}
         onTogglePlaceLock={onTogglePlaceLock}
+        onPreviewRoute={handlePreviewRoute}
         onRequestRegenerateDay={onRequestRegenerateDay}
+        onCloseMobileIntel={handleCloseMobileIntel}
         onSelectTab={setRightPanelTab}
       />
       <SelectedPlaceCard
@@ -184,10 +221,12 @@ export function TripCanvasShell({
         onViewIntel={handleViewIntel}
       />
       <BottomPlaceRail
+        days={trip.days}
         places={visiblePlaces}
         selectedPlaceId={selectedPlaceId}
         lockedPlaceIds={lockedPlaceIds}
         onSelectPlace={handleSelectPlace}
+        onSelectDay={handleSelectDay}
       />
     </main>
   );

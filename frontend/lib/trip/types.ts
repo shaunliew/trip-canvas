@@ -93,11 +93,30 @@ export type TripPlace = {
   confidence?: number;
 };
 
+export type TripDayStopCategory =
+  | "attraction"
+  | "restaurant"
+  | "cafe"
+  | "hotel"
+  | "transport"
+  | "shopping"
+  | "other";
+
+export type TripDayStop = {
+  timeOfDay: "morning" | "afternoon" | "evening";
+  name: string;
+  category: TripDayStopCategory;
+  isAnchor: boolean; // a reel source place or the hotel (vs a supporting find)
+  placeName?: string; // set iff this stop is a source place
+  description?: string;
+};
+
 export type TripDay = {
   day: TripDayNumber;
   title: string;
   summary: string;
   placeIds: string[];
+  stops?: TripDayStop[]; // ~3 time-blocked stops; undefined for legacy payloads
   route?: TripRoute;
   weatherStrategy?: string;
 };

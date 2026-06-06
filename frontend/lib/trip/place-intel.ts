@@ -7,7 +7,6 @@ export type PlaceIntel = {
   howToGo: string;
   insideOrNearby: string[];
   sourceLabel: string;
-  directionsUrl: string;
   visual: {
     label: string;
     detail: string;
@@ -26,7 +25,6 @@ export function buildPlaceIntel(place: TripPlace, days: TripDay[]): PlaceIntel {
     howToGo: buildHowToGo(place),
     insideOrNearby: buildInsideOrNearby(place),
     sourceLabel,
-    directionsUrl: buildDirectionsUrl(place),
     visual: {
       label: place.sourceReelUrl ? "Reel-linked place" : "Map-grounded place",
       detail: place.address || `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`,
@@ -159,9 +157,4 @@ function getSourceLabel(sourceUrl: string | undefined) {
   } catch {
     return "Source link";
   }
-}
-
-function buildDirectionsUrl(place: TripPlace) {
-  const destination = encodeURIComponent(`${place.lat},${place.lng}`);
-  return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=transit`;
 }
