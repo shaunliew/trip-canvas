@@ -200,6 +200,25 @@ class HotelOption(BaseModel):
     is_best: bool = False
 
 
+class PaymentContext(BaseModel):
+    """Agentic-payment (x402/AP2) summary surfaced alongside the itinerary.
+
+    Owned by the agentic-payment work (spike_agentic_payments.py / hotel_base);
+    modeled here ONLY so it survives ItineraryOutput.model_dump() and reaches the
+    frontend via /demo-cache + /itinerary instead of being silently dropped.
+    extra="allow" keeps any future keys Zhi Hao adds intact; all fields are
+    optional/defaulted so an absent payment_context stays None.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    payment_protocol: str = "x402"
+    network: str = ""
+    asset: str = ""
+    agent_payment_usd: str = ""   # string in the cache (e.g. "0.01")
+    mock_booking_only: bool = True
+
+
 class ItineraryOutput(BaseModel):
     """narrator_agent output — final structured itinerary."""
 
@@ -216,6 +235,7 @@ class ItineraryOutput(BaseModel):
     weather_report: Optional[WeatherReport] = None  # injected from weather_agent (Open-Meteo); None = unavailable
     weather_adjustments: list[WeatherAdjustment] = Field(default_factory=list)
     bookings: Optional[BookingResult] = None         # injected from booking_agent (deep links + AP2/x402 settlement); None = unavailable
+    payment_context: Optional[PaymentContext] = None  # agentic-payment summary (x402/AP2); carried from hotel_base. None = unavailable
 
 
 # ---------------------------------------------------------------------------

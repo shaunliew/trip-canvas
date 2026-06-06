@@ -87,6 +87,15 @@ class DemoCacheHappyPathTests(unittest.TestCase):
         )
         self.assertEqual(anchors, Counter(self.resp.itinerary["source_places"]))
 
+    def test_payment_context_survives_endpoint(self) -> None:
+        # ItineraryOutput must model payment_context so it is NOT dropped by
+        # model_dump() — the agentic-payment (x402/AP2) summary reaches the frontend.
+        ctx = self.resp.itinerary.get("payment_context")
+        self.assertIsNotNone(ctx, "payment_context dropped from /demo-cache payload")
+        self.assertEqual(ctx["payment_protocol"], "x402")
+        self.assertTrue(ctx["mock_booking_only"])
+        self.assertTrue(ctx["asset"])
+
 
 class DemoCache503Tests(unittest.TestCase):
     """Each missing/invalid cache must surface a clean 503 (never a 500 leak)."""
