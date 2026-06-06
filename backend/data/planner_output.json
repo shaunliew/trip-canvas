@@ -78,6 +78,25 @@
       "id": "hotel_royal_park_shiodome",
       "name": "The Royal Park Hotel Iconic Tokyo Shiodome",
       "base_area_id": "shiodome",
+      "city": "Tokyo",
+      "area": "Shiodome",
+      "lat": 35.6655,
+      "lng": 139.7585,
+      "price_per_night_sgd": 200,
+      "station_walk_min": 6,
+      "convenience_store_walk_min": 2,
+      "quiet_score": 8,
+      "route_efficiency_score": 9,
+      "budget_tier": "mid_range",
+      "amenities": [
+        "breakfast",
+        "near_station",
+        "laundry",
+        "near_convenience_store"
+      ],
+      "mock_available_rooms": 3,
+      "room_type": "Standard double room",
+      "cancellation_policy": "Free cancellation until 48 hours before check-in",
       "price_summary": "Mid-range to upper-mid. Direct-access Shiodome tower with strong rail links to Narita and walkable Ginza/Shimbashi.",
       "booking_url": "https://www.booking.com/hotel/jp/royalpark-shiodometower.html?nad_placement=SR_MAIN",
       "rationale": "Best pick: meets every requirement — central Shiodome base with covered station access (great for the rainy arrival days), walking-friendly to Ginza/Shimbashi dining, and an easy NRT transfer that fits the Scoot arrival.",
@@ -114,6 +133,13 @@
       "is_best": false
     }
   ],
+  "payment_context": {
+    "payment_protocol": "x402",
+    "network": "base-sepolia",
+    "asset": "USDC",
+    "agent_payment_usd": "0.01",
+    "mock_booking_only": true
+  },
   "weather_report": {
     "destination": "Tokyo",
     "day_forecasts": [

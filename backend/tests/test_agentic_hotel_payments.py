@@ -13,8 +13,9 @@ from backend.spike_agentic_payments import (
     AgenticHotelPaymentService,
     BookingMandate,
     HotelBookingRequest,
+    X402RealAdapter,
     X402SimulationAdapter,
-    load_hotel_base_dict,
+    load_hotel_tool_dict,
     resolve_selected_hotel,
 )
 
@@ -22,28 +23,49 @@ from backend.spike_agentic_payments import (
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
-def booking_ready_hotel_base() -> dict:
-    with (DATA_DIR / "hotel_base_output.json").open(encoding="utf-8") as fh:
-        hotel_base = json.load(fh)
+class FakeX402Binding:
+    def __init__(self, *, fail_settlement: bool = False):
+        self.fail_settlement = fail_settlement
+        self.requirements_config = None
+        self.payment_payload = {"signed": "payload"}
 
-    hotel_base = copy.deepcopy(hotel_base)
-    hotel_base["payment_context"] = {
+    def build_payment_requirements(self, **config):
+        self.requirements_config = config
+        return [{"network": config["network"], "payTo": config["pay_to"]}]
+
+    def create_payment_payload(self, requirements):
+        return self.payment_payload
+
+    def verify_and_settle(self, payload, requirements):
+        if self.fail_settlement:
+            return {"success": False, "error": "facilitator rejected payment"}
+        return {"success": True, "tx_hash": "0xREALX402SETTLED"}
+
+
+def booking_ready_hotel_tool() -> dict:
+    with (DATA_DIR / "planner_output.json").open(encoding="utf-8") as fh:
+        hotel_tool = json.load(fh)
+
+    hotel_tool = copy.deepcopy(hotel_tool)
+    hotel_tool["payment_context"] = {
         "payment_protocol": "x402",
         "network": "base-sepolia",
         "asset": "USDC",
         "agent_payment_usd": "0.01",
         "mock_booking_only": True,
     }
-    for hotel in hotel_base["hotel_candidates"]:
-        if hotel["id"] == hotel_base["selected_hotel_id"]:
+    for hotel in hotel_tool["hotel_options"]:
+        if hotel.get("is_best") is True:
             hotel.update(
                 {
-                    "city": "Osaka",
-                    "area": "Dotonbori",
-                    "price_per_night_sgd": 165,
+                    "city": "Tokyo",
+                    "area": "Shiodome",
+                    "lat": 35.6655,
+                    "lng": 139.7585,
+                    "price_per_night_sgd": 200,
                     "station_walk_min": 6,
                     "convenience_store_walk_min": 2,
-                    "quiet_score": 6,
+                    "quiet_score": 8,
                     "route_efficiency_score": 9,
                     "budget_tier": "mid_range",
                     "amenities": ["breakfast", "near_station", "laundry"],
@@ -52,7 +74,7 @@ def booking_ready_hotel_base() -> dict:
                     "cancellation_policy": "Free cancellation until 48 hours before check-in",
                 }
             )
-    return hotel_base
+    return hotel_tool
 
 
 def demo_mandate(**overrides) -> BookingMandate:
@@ -60,7 +82,7 @@ def demo_mandate(**overrides) -> BookingMandate:
         "mandate_id": "ap2-demo-tc-osaka-001",
         "mode": "autonomous",
         "allowed_action": "mock_hotel_booking",
-        "city": "Osaka",
+        "city": "Tokyo",
         "checkin": "2026-06-10",
         "checkout": "2026-06-13",
         "guests": 2,
@@ -81,25 +103,35 @@ def demo_mandate(**overrides) -> BookingMandate:
 def demo_request(**overrides) -> HotelBookingRequest:
     data = {
         "trip_id": "tc-demo-osaka-001",
-        "hotel_base": booking_ready_hotel_base(),
+        "hotel_base": booking_ready_hotel_tool(),
         "mandate": demo_mandate(),
         "idempotency_key": (
             "tc-demo-osaka-001:ap2-demo-tc-osaka-001:"
-            "hotel_forza_osaka_namba_dotonbori"
+            "hotel_royal_park_shiodome"
         ),
     }
     data.update(overrides)
     return HotelBookingRequest.model_validate(data)
 
 
+def real_demo_request(**overrides) -> HotelBookingRequest:
+    data = {
+        "mandate": demo_mandate(network="eip155:84532"),
+    }
+    data.update(overrides)
+    return demo_request(**data)
+
+
 class AgenticHotelPaymentTests(unittest.TestCase):
-    def test_cached_hotel_base_output_loads_and_resolves_selected_hotel(self):
-        hotel_base = load_hotel_base_dict()
+    def test_planner_output_loads_and_resolves_best_hotel_option(self):
+        hotel_tool = load_hotel_tool_dict()
 
-        selected_hotel = resolve_selected_hotel(hotel_base)
+        selected_hotel = resolve_selected_hotel(hotel_tool)
 
-        self.assertEqual(selected_hotel["id"], hotel_base["selected_hotel_id"])
-        self.assertEqual(selected_hotel["name"], "Hotel Forza Osaka Namba Dotonbori")
+        self.assertIn("hotel_options", hotel_tool)
+        self.assertEqual(selected_hotel["id"], "hotel_royal_park_shiodome")
+        self.assertEqual(selected_hotel["name"], "The Royal Park Hotel Iconic Tokyo Shiodome")
+        self.assertIs(selected_hotel["is_best"], True)
 
     def test_booking_requires_payment_before_proof(self):
         service = AgenticHotelPaymentService()
@@ -128,7 +160,7 @@ class AgenticHotelPaymentTests(unittest.TestCase):
             "TC-MOCK-HOTEL-"
             + hashlib.sha1(
                 "tc-demo-osaka-001|ap2-demo-tc-osaka-001|"
-                "hotel_forza_osaka_namba_dotonbori|2026-06-10|2026-06-13|2".encode()
+                "hotel_royal_park_shiodome|2026-06-10|2026-06-13|2".encode()
             )
             .hexdigest()[:8]
             .upper()
@@ -200,9 +232,9 @@ class AgenticHotelPaymentTests(unittest.TestCase):
         self.assertEqual(response.error.code, "hotel_booking_mode_not_mock")
 
     def test_selected_hotel_without_rooms_is_rejected(self):
-        hotel_base = booking_ready_hotel_base()
-        for hotel in hotel_base["hotel_candidates"]:
-            if hotel["id"] == hotel_base["selected_hotel_id"]:
+        hotel_base = booking_ready_hotel_tool()
+        for hotel in hotel_base["hotel_options"]:
+            if hotel.get("is_best") is True:
                 hotel["mock_available_rooms"] = 0
 
         response = AgenticHotelPaymentService().run_payment_loop(
@@ -214,8 +246,10 @@ class AgenticHotelPaymentTests(unittest.TestCase):
         self.assertEqual(response.error.code, "no_mock_rooms_available")
 
     def test_smoke_path_missing_selected_hotel_is_rejected_without_receipt(self):
-        hotel_base = booking_ready_hotel_base()
-        hotel_base["selected_hotel_id"] = "missing-hotel"
+        hotel_base = booking_ready_hotel_tool()
+        for hotel in hotel_base["hotel_options"]:
+            hotel["is_best"] = False
+        hotel_base["recommended_hotel"] = "Missing Hotel"
 
         response = AgenticHotelPaymentService().run_payment_loop({
             "trip_id": "tc-demo-osaka-001",
@@ -236,6 +270,79 @@ class AgenticHotelPaymentTests(unittest.TestCase):
         self.assertEqual(response.status, "payment_failed")
         self.assertIsNone(response.receipt)
         self.assertEqual(response.error.code, "payment_simulation_failed")
+        self.assertEqual(response.audit_events[-1].type, "payment_failed")
+
+    def test_real_mode_selects_real_x402_adapter(self):
+        with patch.dict(os.environ, {"X402_MODE": "real"}):
+            service = AgenticHotelPaymentService()
+
+        self.assertIsInstance(service.payment_adapter, X402RealAdapter)
+
+    def test_real_mode_missing_private_key_fails_closed_without_receipt(self):
+        with patch.dict(os.environ, {"X402_MODE": "real", "HOTEL_AGENT_PAY_TO": "0xSeller"}, clear=True):
+            response = AgenticHotelPaymentService().run_payment_loop(real_demo_request())
+
+        self.assertEqual(response.status, "payment_failed")
+        self.assertIsNone(response.receipt)
+        self.assertEqual(response.error.code, "x402_real_config_missing")
+        self.assertEqual(response.audit_events[-1].type, "payment_failed")
+
+    def test_real_mode_missing_payee_fails_closed_without_receipt(self):
+        with patch.dict(os.environ, {"X402_MODE": "real", "ORCHESTRATOR_PRIVATE_KEY": "0xBuyerKey"}, clear=True):
+            response = AgenticHotelPaymentService().run_payment_loop(real_demo_request())
+
+        self.assertEqual(response.status, "payment_failed")
+        self.assertIsNone(response.receipt)
+        self.assertEqual(response.error.code, "x402_real_config_missing")
+        self.assertEqual(response.audit_events[-1].type, "payment_failed")
+
+    def test_real_adapter_maps_successful_settlement_to_settled_receipt(self):
+        binding = FakeX402Binding()
+        service = AgenticHotelPaymentService(payment_adapter=X402RealAdapter(sdk_binding=binding))
+
+        with patch.dict(
+            os.environ,
+            {
+                "X402_MODE": "real",
+                "X402_NETWORK": "eip155:84532",
+                "ORCHESTRATOR_PRIVATE_KEY": "0xBuyerKey",
+                "ORCHESTRATOR_WALLET_ADDRESS": "0xBuyer",
+                "HOTEL_AGENT_PAY_TO": "0xSeller",
+            },
+        ):
+            response = service.run_payment_loop(real_demo_request())
+
+        self.assertEqual(response.status, "mock_confirmed")
+        self.assertEqual(response.payment.status, "settled")
+        self.assertEqual(response.payment.tx_hash, "0xREALX402SETTLED")
+        self.assertIsNone(response.payment_required)
+        self.assertIn("No real hotel reservation was created", response.receipt.receipt_note)
+        self.assertIn("real x402 settlement completed", response.audit_events[-2].message)
+        self.assertEqual(binding.requirements_config["network"], "eip155:84532")
+        self.assertEqual(binding.requirements_config["pay_to"], "0xSeller")
+        self.assertEqual(binding.requirements_config["price"], "$0.01")
+
+    def test_real_adapter_failure_returns_payment_failed_without_simulated_receipt(self):
+        service = AgenticHotelPaymentService(
+            payment_adapter=X402RealAdapter(sdk_binding=FakeX402Binding(fail_settlement=True))
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "X402_MODE": "real",
+                "X402_NETWORK": "eip155:84532",
+                "ORCHESTRATOR_PRIVATE_KEY": "0xBuyerKey",
+                "ORCHESTRATOR_WALLET_ADDRESS": "0xBuyer",
+                "HOTEL_AGENT_PAY_TO": "0xSeller",
+            },
+        ):
+            response = service.run_payment_loop(real_demo_request())
+
+        self.assertEqual(response.status, "payment_failed")
+        self.assertIsNone(response.receipt)
+        self.assertIsNone(response.payment)
+        self.assertEqual(response.error.code, "x402_real_settlement_failed")
         self.assertEqual(response.audit_events[-1].type, "payment_failed")
 
     def test_hotel_booking_endpoint_runs_backend_smoke_path(self):

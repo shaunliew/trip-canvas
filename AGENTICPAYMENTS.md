@@ -98,7 +98,8 @@ Suggested environment variables:
 
 ```bash
 X402_ENABLED=true
-X402_NETWORK=base-sepolia
+X402_MODE=real
+X402_NETWORK=eip155:84532
 X402_FACILITATOR_URL=https://x402.org/facilitator
 X402_HOTEL_BOOKING_PRICE_USD=0.01
 
@@ -117,10 +118,16 @@ Guardrails:
 - Do not log private keys, raw payment signatures, or full authorization headers.
 - Use tiny testnet/sandbox amounts only.
 - Fail closed if `HOTEL_BOOKING_MODE` is not `mock`.
+- Fail closed in `X402_MODE=real`; do not fall back to simulated payment if signing, verification, or settlement fails.
 
 ## Data Fixtures
 
 Because the demo does not call a real hotel supplier API, the hotel booking agent needs committed fixture data.
+
+For the current backend proof path, the hotel booking agent uses
+`backend/data/planner_output.json` as its tool payload. The selected
+`hotel_options` entry (`is_best: true`) should carry the mock-booking metadata
+needed for payment validation and receipt generation.
 
 ### Hotel Inventory Fixture
 
@@ -175,7 +182,7 @@ This is the user-authorized purchase scope. V1 may store it as unsigned demo JSO
   "max_total_sgd": 650,
   "max_agent_payment_usd": 0.01,
   "payment_protocol": "x402",
-  "network": "base-sepolia",
+  "network": "eip155:84532",
   "expires_at": "2026-06-10T00:00:00Z",
   "requires_user_visible_receipt": true,
   "mock_booking_only": true
@@ -240,7 +247,7 @@ The mock booking receipt should be explicit that it is not a real hotel reservat
   },
   "payment": {
     "protocol": "x402",
-    "network": "base-sepolia",
+    "network": "eip155:84532",
     "payer": "0xOrchestrator...",
     "payee": "0xHotelAgent...",
     "amount": "0.01",
@@ -305,7 +312,8 @@ Avoid:
 | Failure | Expected Behavior |
 | --- | --- |
 | User does not approve mandate | Do not call the x402 booking step. Continue with hotel recommendation only. |
-| x402 disabled | Return a mock booking with `payment.status = "simulated"` only if demo mode explicitly allows it. |
+| x402 simulation mode | Return a mock booking with `payment.status = "simulated"` and a simulated tx hash. |
+| x402 real mode is misconfigured | Return `payment_failed` with no receipt. Do not fall back to simulation. |
 | x402 payment fails | Show failed payment in audit trail, keep selected hotel, and continue itinerary without booking receipt. |
 | Hotel inventory has no matching room | Show no booking created and fall back to itinerary planning from selected base area. |
 | Mandate constraints are violated | Refuse booking and show which constraint failed. |
@@ -335,9 +343,9 @@ Avoid:
    - Return deterministic `TC-MOCK-HOTEL-...` IDs.
 
 3. **x402 integration**
-   - Add x402 seller behavior to the hotel booking endpoint.
-   - Add orchestrator buyer behavior to pay and retry.
-   - Keep simulation fallback explicitly labeled.
+   - Add real x402 settlement behind the hotel booking payment adapter.
+   - Add orchestrator buyer behavior to sign, verify, settle, and retry.
+   - Keep simulation fallback explicitly labeled and unavailable in `X402_MODE=real`.
 
 4. **Orchestrator SSE**
    - Add booking stage events after `/hotel-base` and before `/itinerary`.

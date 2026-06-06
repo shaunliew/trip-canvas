@@ -38,6 +38,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from spike_agentic_payments import (
+    AgenticHotelPaymentService,
+    HotelBookingRequest,
+    HotelBookingResponse,
+)
 from spike_e2e import PlaceResult as ExtractedPlace
 from spike_e2e_planner import (
     _EXTRACTION_TIMEOUT,
@@ -369,3 +374,8 @@ async def hotel_base(req: HotelBaseRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/hotel-booking", response_model=HotelBookingResponse)
+async def hotel_booking(req: HotelBookingRequest) -> HotelBookingResponse:
+    return AgenticHotelPaymentService().run_payment_loop(req)

@@ -51,10 +51,29 @@ class HotelCandidate(BaseModel):
     base_area_id: str
     lat: Optional[float] = Field(default=None, ge=-90, le=90)
     lng: Optional[float] = Field(default=None, ge=-180, le=180)
+    area: Optional[str] = None
+    price_per_night_sgd: Optional[int] = Field(default=None, ge=0)
+    station_walk_min: Optional[int] = Field(default=None, ge=0)
+    convenience_store_walk_min: Optional[int] = Field(default=None, ge=0)
+    quiet_score: Optional[int] = Field(default=None, ge=0, le=10)
+    route_efficiency_score: Optional[int] = Field(default=None, ge=0, le=10)
+    budget_tier: Optional[str] = None
+    amenities: list[str] = Field(default_factory=list)
+    mock_available_rooms: Optional[int] = Field(default=None, ge=0)
+    room_type: Optional[str] = None
+    cancellation_policy: Optional[str] = None
     price_summary: str
     booking_url: Optional[str] = None
     rationale: str
     tradeoffs: list[str] = Field(default_factory=list)
+
+
+class HotelPaymentContext(BaseModel):
+    payment_protocol: Literal["x402"]
+    network: str
+    asset: str
+    agent_payment_usd: str
+    mock_booking_only: bool
 
 
 class HotelBaseResult(BaseModel):
@@ -63,6 +82,7 @@ class HotelBaseResult(BaseModel):
     base_areas: list[BaseAreaCandidate]
     hotel_candidates: list[HotelCandidate]
     selected_hotel_id: str
+    payment_context: Optional[HotelPaymentContext] = None
 
 
 class HotelBaseAgentOutput(BaseModel):
