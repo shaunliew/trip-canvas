@@ -8,6 +8,7 @@ from backend.spike_hotel_base import (
     HotelPreferenceInput,
     build_fallback_hotel_base_result,
     build_hotel_base_prompt,
+    cache_path,
     hotel_base_agent,
     normalize_live_hotel_base_result,
     sse_event,
@@ -83,6 +84,21 @@ class HotelBaseContractTests(unittest.TestCase):
 
         self.assertIsNone(candidate.lat)
         self.assertIsNone(candidate.lng)
+
+    def test_cached_fixture_preserves_selected_tokyo_hotel_recommendation(self):
+        with open(cache_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        result = HotelBaseResult.model_validate(data)
+        selected_hotel = next(
+            hotel for hotel in result.hotel_candidates if hotel.id == result.selected_hotel_id
+        )
+
+        self.assertEqual(selected_hotel.id, "hotel_royal_park_shiodome")
+        self.assertEqual(selected_hotel.name, "The Royal Park Hotel Iconic Tokyo Shiodome")
+        self.assertEqual(selected_hotel.lat, 35.6655)
+        self.assertEqual(selected_hotel.lng, 139.7585)
+        self.assertEqual(result.payment_context, None)
 
     def test_prompt_includes_places_and_hotel_preferences(self):
         prompt = build_hotel_base_prompt(
