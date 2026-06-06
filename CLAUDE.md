@@ -2,7 +2,9 @@
 
 ## What we are building
 
-AI-native travel planner. User pastes 3-4 Instagram Reel URLs + travel dates + budget + origin city + free-text preferences. Backend extracts real places, researches them live, fetches weather, generates demo-safe booking confirmations, and assembles a day-by-day itinerary. Frontend renders a Mapbox 3D globe → zoom-in city map → streaming AI agent panel.
+AI-native travel planner. User pastes 3-4 Instagram Reel URLs + travel dates + budget + origin city + free-text preferences. Backend extracts real places, researches them live, fetches weather, recommends 3 hotels (with one best pick), assembles a day-by-day itinerary, and runs an **agentic payment** (AP2 + x402) over **mock** bookings. Frontend renders a **Mapbox 3D map** (tilted/3D globe → zoom-in city map) → streaming AI agent panel.
+
+> **Pivot note (2026-06-06):** (1) Frontend is a **Mapbox 3D map**, NOT a flipbook/pop-up book. (2) Payments moved from Duffel to an **AP2 + x402 agentic-payment seam** — the *payment* is the headline ("the agent really pays"), the *booking/fulfillment stays mock* (`is_mock=True`). (3) Itinerary hotels are now **3 recommendations + 1 best pick**. Current code round is **backend-only**; the 3D-map frontend revamp is a separate next round.
 
 Hackathon: Sea × OpenAI Codex Hackathon, 6 June 2026, Singapore.
 Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
@@ -13,9 +15,11 @@ Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
 
 | Person | Owns |
 |--------|------|
-| Shaun  | Extract pipeline (`spike_e2e.py`), planner + weather + booking agents (`spike_planner.py`, `spike_weather.py`, `spike_booking.py`), FastAPI SSE (`main.py`), demo reliability |
-| Zhi Hao | Mapbox 3D frontend: `TripGenerationShell`, `TripMap`, `RightTripPanel`, `PlaceIntelPanel` |
-| Cody  | Weather + booking agent code + Pydantic schemas (collab w/ Shaun on planner integration) |
+| Shaun  | **Frontend 3D Mapbox revamp** + **backend agent logic**: extract (`spike_e2e.py`), planner/narrator (`spike_planner.py`), weather (`spike_weather.py`), hotel-base 3-rec (`spike_hotel_base.py`), FastAPI SSE (`main.py`), demo reliability |
+| Zhi Hao | **Agentic payment**: AP2 (Intent/Cart mandates) + x402 (HTTP-402 settlement) wired into the `PaymentProvider` seam in `spike_booking.py` (replaces the default `MockSettlementProvider` with a real AP2-mandate → x402-facilitator client) |
+| Cody  | Pydantic schemas + agent code (weather / booking / hotel-base), collab w/ Shaun on planner integration |
+
+> Round split: **this round = backend + docs (Shaun's agent logic + hotel 3-rec + the payment seam stub)**. **Next round = frontend 3D-map revamp (Shaun)** and **real AP2/x402 settlement (Zhi Hao)**.
 
 ---
 
@@ -24,21 +28,25 @@ Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 15 (App Router) + React 19 + Tailwind v4 + **mapbox-gl 3.24.0** |
-| Map | **Mapbox GL JS only** (NOT Google Maps, NOT MapLibre, NOT Three.js) |
+| Map | **Mapbox GL JS only**, **3D/tilted** (NOT Google Maps, NOT MapLibre, NOT Three.js, NOT a flipbook) |
 | Backend | FastAPI (Python ≥3.14) + Server-Sent Events |
 | Reel ingestion | **Apify MCP** via `MCPServerStreamableHttp` → `https://mcp.apify.com/?tools=actors,docs,apify/instagram-reel-scraper` |
 | LLM reasoning | OpenAI Agents SDK `Agent(model="gpt-5.5-2026-04-23")` + `gpt-4o` typed fallback + `WebSearchTool` |
 | Place extraction | `_extract_for_reel` agent in `spike_e2e.py`: `output_type=ExtractionResult`, `WebSearchTool` for geocoding |
-| Itinerary planning | `enricher` + `narrator_agent` in `spike_planner.py` |
+| Hotel recommendation | `hotel_base_agent` in `spike_hotel_base.py`: **3 hotel candidates + 1 best pick** (`selected_hotel_id`), all in the selected base area |
+| Itinerary planning | `enricher` + `narrator_agent` in `spike_planner.py` (carries `hotel_options` = the 3 recs) |
 | Weather | **Open-Meteo** HTTP (free, no API key, 10k calls/day) wrapped as `function_tool` |
-| Booking — flights | **Duffel sandbox** test mode (`Duffel Airways`, $0 real-money risk, real-shape order IDs) |
+| **Agentic payment** | **AP2** (Agent Payments Protocol — signed Intent/Cart mandates = authorization) **+ x402** (Coinbase HTTP-402 → `X-PAYMENT` header → facilitator settles USDC = settlement). Modeled as a `PaymentProvider` seam; default `MockSettlementProvider` this round, real client owned by Zhi Hao |
+| Booking — flights | **Skyscanner deep-link composer** + `TC-MOCK-{sha1[:8]}` id (mock fulfillment). *Duffel sandbox = deprecated optional fallback, only if `DUFFEL_TEST_TOKEN` set* |
 | Booking — hotels | **Booking.com search-URL composer** (no auth) + `TC-MOCK-{sha1[:8]}` id |
 | Booking — attractions | **Klook search-URL composer** (no auth) + `TC-MOCK-{sha1[:8]}` id |
-| Booking overlay | Pydantic `BookingResult` with `is_mock=True` on every item |
+| Booking overlay | Pydantic `BookingResult` with `is_mock=True` on every item; each item carries an optional `settlement` (AP2/x402 `PaymentSettlement`) |
 | Multi-agent | OpenAI Agents SDK (`uv add openai-agents openai`) — `from agents import Agent, Runner` |
 | Package manager | `uv` (`pyproject.toml` at PROJECT ROOT, not `backend/`) |
 
-Dropped / never-used (don't reintroduce): react-pageflip, Framer Motion, Google Maps, MapLibre, Three.js, ffmpeg, transcription, Google Places, yt-dlp, requirements.txt.
+Dropped / never-used (don't reintroduce): react-pageflip, flipbook/pop-up book, Framer Motion, Google Maps, MapLibre, Three.js, ffmpeg, transcription, Google Places, yt-dlp, requirements.txt.
+
+**Payment vs booking — the core demo distinction:** the *payment* (AP2 mandate + x402 settlement) is the real, agent-driven act we showcase; the *booking/fulfillment* is always mock (`is_mock=True`). These are **separate fields**: `BookingItem.status` (`reserved`/`confirmed`) is fulfillment; `BookingItem.settlement` (`payment_status`, `settlement_id`, `payment_protocol`, `is_mock_settlement`) is payment. Never conflate them.
 
 ---
 
@@ -58,15 +66,28 @@ Frontend tolerates unknown event types — adding stage events is non-breaking.
 
 ## Env Vars (required at startup)
 
-Backend:
+Backend (required):
 ```
 OPENAI_API_KEY
 APIFY_TOKEN
-DUFFEL_TEST_TOKEN     # MUST contain "_test_" — startup asserts; rejects prod tokens
+```
+
+Backend (optional — every one of these is optional; `USE_CACHE=true` needs NONE of them):
+```
 USE_CACHE             # "true" to bypass live extraction, use data/places.json
 DEMO_REEL_URLS        # comma-separated reel URLs for spike scripts (e.g. url1,url2,url3,url4)
 DEMO_REEL_URL         # single-URL fallback — DEMO_REEL_URLS takes precedence
 BOOKING_AID           # optional Booking.com affiliate id, may be empty for hackathon
+
+# --- Agentic payment (AP2 + x402) — Zhi Hao's domain ---
+USE_MOCK_PAYMENT      # "true" (default) → MockSettlementProvider, no network. "false" → real provider (next round)
+X402_FACILITATOR_URL  # x402 facilitator endpoint for verify+settle (e.g. Coinbase CDP). Unused while mock
+PAYMENT_NETWORK       # settlement chain e.g. "base-sepolia" (testnet) | "base". "mock" when USE_MOCK_PAYMENT
+AP2_MANDATE_SIGNING_KEY  # key/keyref for signing AP2 Intent/Cart mandates. Placeholder until real client lands
+X402_PAYER_ADDRESS    # agent wallet address used by x402 (testnet USDC). Placeholder until real client lands
+
+# --- Deprecated (optional fallback only) ---
+DUFFEL_TEST_TOKEN     # DEPRECATED. If set, MUST contain "_test_" (guard still enforced). Absent → Duffel path skipped, no startup abort
 ```
 
 Frontend:
@@ -88,13 +109,15 @@ tripcanvas/
 │   ├── spike_places.py             # Phase 0.5 smoke (not in serving path)
 │   ├── spike_e2e.py                # ReelData, ExtractionResult, _scrape_reel, _extract_for_reel
 │   ├── spike_e2e_planner.py        # run_extraction + run_pipeline orchestrator
-│   ├── spike_planner.py            # enricher, narrator_agent, EnrichedContext, ItineraryOutput
-│   ├── spike_weather.py            # NEW: weather_agent + fetch_weather (Open-Meteo)
-│   ├── spike_booking.py            # NEW: booking_agent + book_flight (Duffel) + book_hotel + book_attraction (URL composers)
+│   ├── spike_planner.py            # enricher, narrator_agent, EnrichedContext, ItineraryOutput (+ hotel_options)
+│   ├── spike_weather.py            # weather_agent + fetch_weather (Open-Meteo)
+│   ├── spike_hotel_base.py         # hotel_base_agent: 3 hotel candidates + best pick (selected_hotel_id)
+│   ├── spike_booking.py            # booking_agent + deep-link composers + PaymentProvider seam (AP2/x402; Duffel deprecated)
 │   ├── lib/                        # placeholder package — leave empty (do NOT premature-modularize)
-│   └── data/
+│   └── data/                       # one JSON per purpose — no duplicate result files
 │       ├── places.json             # COMMITTED cache (extract fallback)
-│       └── planner_output.json     # COMMITTED cache (itinerary fallback)
+│       ├── hotel_base_output.json  # COMMITTED cache (3 hotel candidates + best pick)
+│       └── planner_output.json     # COMMITTED — THE single canonical itinerary result (hotel_options + settlements)
 └── frontend/
     ├── app/page.tsx                # routes to TripGenerationShell
     ├── app/trip/page.tsx           # same shell
@@ -122,15 +145,21 @@ Earlier docs described `backend/lib/agents/{triage,research,hotels,transport,nar
            output_type=ExtractionResult
 
   → _flatten_and_dedup_by_name + _top_n_by_confidence (cap _MAX_PLACES=5)
-  → /extract returns ExtractResponse {places, source, count} ← frontend zooms globe
+  → /extract returns ExtractResponse {places, source, count} ← frontend zooms 3D map
+
+  → /hotel-base SSE (optional, pre-itinerary):
+        hotel_base_agent → 3 hotel_candidates (all in selected_base) + selected_hotel_id (best pick)
 
   → /itinerary SSE:
         asyncio.gather(
             enricher,                  # research + hotel + flight (WebSearchTool, batched)
-            weather_agent,             # NEW: Open-Meteo function tool, parallel
+            weather_agent,             # Open-Meteo function tool, parallel
         ) → EnrichedContext (incl. weather_report)
-        → booking_agent                # NEW: Duffel + URL composers, post-enricher
-        → narrator_agent               # assembles ItineraryOutput JSON (incl. bookings)
+        → asyncio.gather(
+            narrator_agent,            # assembles ItineraryOutput JSON
+            booking_agent,             # deep-link composers + PaymentProvider.settle() per item (AP2/x402 mock)
+          )
+        → ItineraryOutput (incl. hotel_options[3, one is_best], bookings[items w/ settlement])
   → SSE: start → heartbeat ×N → stage ×K (optional) → result → [DONE]
 ```
 
@@ -226,55 +255,108 @@ Wire-up: runs in parallel with `enricher` via `asyncio.gather` in `_run_planner_
 
 ---
 
-## Booking Agent (`spike_booking.py`)
+## Hotel Recommendation — 3 + best pick (`spike_hotel_base.py`)
+
+The hotel-base optimizer returns **exactly 3 hotel candidates**, all within the chosen base area, and flags the **single best** one via `selected_hotel_id` (the hotel that fulfills ALL the traveler's requirements — budget, walkability, station access, preferences).
 
 ```python
+_MAX_HOTELS = 3   # was 2 — itinerary shows 3 recs + best pick
+
+class HotelCandidate(BaseModel):
+    id: str
+    name: str
+    base_area_id: str          # MUST equal selected_base.id (enforced on normalize)
+    lat: float | None; lng: float | None
+    price_summary: str
+    booking_url: str | None
+    rationale: str
+    tradeoffs: list[str]
+
+class HotelBaseResult(BaseModel):
+    source: Literal["live", "cache"]
+    selected_base: BaseAreaCandidate
+    base_areas: list[BaseAreaCandidate]
+    hotel_candidates: list[HotelCandidate]   # exactly 3
+    selected_hotel_id: str                   # the best pick — one of the 3
+```
+
+Invariants (enforced in `normalize_live_hotel_base_result`, `build_fallback_hotel_base_result`, AND on cache load):
+- Exactly 3 `hotel_candidates`. Live under-returns → pad deterministically; over-returns → truncate (always keeping `selected_hotel_id`).
+- Every `hotel_candidates[].base_area_id == selected_base.id`.
+- `selected_hotel_id` is always one of the 3.
+
+Surfacing into the itinerary: `_run_planner_inner` maps the 3 candidates into `ItineraryOutput.hotel_options: list[HotelOption]` (one with `is_best=True`). The daily `ItineraryDay.hotel` and `recommended_hotel` stay the single best pick (Gate 6 unchanged).
+
+---
+
+## Booking + Agentic Payment (`spike_booking.py`)
+
+Bookings are **mock fulfillment** (deep links). The new headline is the **agentic payment**: AP2 authorization + x402 settlement, modeled behind a `PaymentProvider` seam so Zhi Hao can drop in a real client without touching the booking flow.
+
+```python
+class PaymentSettlement(BaseModel):              # NEW — the "real payment" record (separate from booking)
+    settlement_id: str                           # "ap2-mock-{sha1[:10]}" (mock) | real x402 tx ref
+    payment_protocol: Literal["ap2_x402"] = "ap2_x402"
+    payment_network: str = "mock"                # "mock" | "base-sepolia" | "base"
+    payment_status: Literal["mock", "pending", "settled", "failed"] = "mock"
+    amount_sgd: float | None = None
+    is_mock_settlement: bool = True              # True this round; False when real x402 settles
+    notes: str = ""
+
 class BookingItem(BaseModel):
-    booking_id: str                          # "ord_..." for Duffel, "TC-MOCK-{sha1[:8]}" otherwise
+    booking_id: str                              # "TC-MOCK-{sha1[:8]}" (mock) | "ord_..." (deprecated Duffel)
     category: Literal["flight", "hotel", "attraction"]
     name: str
     price_estimate_sgd: float | None
-    status: Literal["confirmed", "reserved"]
+    status: Literal["confirmed", "reserved"]     # FULFILLMENT, not payment
     book_url: str
-    source: Literal["duffel_sandbox", "booking_deeplink", "klook_deeplink"]
-    is_mock: bool                            # ALWAYS True
-    notes: str                               # one sentence rationale
+    source: Literal["duffel_sandbox", "booking_deeplink", "klook_deeplink"]   # UNCHANGED union
+    is_mock: bool                                # ALWAYS True (fulfillment is simulated)
+    notes: str
+    settlement: PaymentSettlement | None = None  # NEW — the agentic-payment record
 
 class BookingResult(BaseModel):
     items: list[BookingItem]
     total_estimate_sgd: float
     is_mock: bool = True
+    payment_protocol: str = "ap2_x402"           # NEW
+    total_settled_sgd: float = 0.0               # NEW
+    is_mock_settlement: bool = True              # NEW
 ```
 
-Three `function_tool`s:
+The `PaymentProvider` seam:
+
+```python
+class PaymentProvider(ABC):
+    async def settle(self, *, reference, amount_sgd, category, name) -> PaymentSettlement: ...
+
+class MockSettlementProvider(PaymentProvider):   # default — deterministic, NO network
+    # payment_status="mock", is_mock_settlement=True, settlement_id="ap2-mock-{hash}"
+    ...
+```
+
+`book_trip(..., payment_provider: PaymentProvider | None = None)` defaults to `MockSettlementProvider`. After the deep-link `BookingItem`s are assembled + invariant-sanitized, the provider's `settle()` is called per item (timeout-bound, never raises) and attached as `item.settlement`. **Zhi Hao's real provider** = an AP2 client (build + sign Intent/Cart mandates) → x402 client (HTTP-402 → `X-PAYMENT` → CDP facilitator settles testnet USDC) returning `payment_status="settled"`, `is_mock_settlement=False`, real `settlement_id`. The booking items stay `is_mock=True`.
+
+Booking tools (deep-link composers, unchanged shape):
 
 | Tool | Backend | Returns |
 |---|---|---|
-| `book_flight(origin, destination, date)` | Duffel sandbox `POST /air/offer_requests` → `POST /air/orders` via httpx, `DUFFEL_TEST_TOKEN` | `BookingItem(source="duffel_sandbox", status="confirmed", booking_id=<duffel order id>, book_url=<PNR lookup>)` |
-| `book_hotel(city, checkin, checkout, guests)` | URL composer (no API call) | `BookingItem(source="booking_deeplink", status="reserved", booking_id="TC-MOCK-{hash}", book_url="https://www.booking.com/searchresults.html?ss={city}&checkin={d1}&checkout={d2}&group_adults={n}&no_rooms=1{&aid=...}")` |
-| `book_attraction(name, city)` | URL composer (no API call) | `BookingItem(source="klook_deeplink", status="reserved", booking_id="TC-MOCK-{hash}", book_url="https://www.klook.com/search/?keyword={urlencode(name)}")` |
+| `book_flight(origin, destination, date)` | Skyscanner deep-link composer (default). *Duffel sandbox only if `DUFFEL_TEST_TOKEN` set — DEPRECATED* | `BookingItem(source="booking_deeplink", status="reserved", booking_id="TC-MOCK-{hash}")` (or `duffel_sandbox`/`confirmed` on the deprecated path) |
+| `book_hotel(city, checkin, checkout, guests)` | Booking.com URL composer | `BookingItem(source="booking_deeplink", status="reserved", booking_id="TC-MOCK-{hash}")` |
+| `book_attraction(name, city)` | Klook URL composer | `BookingItem(source="klook_deeplink", status="reserved", booking_id="TC-MOCK-{hash}")` |
 
 `TC-MOCK` id formula: `"TC-MOCK-" + sha1(f"{category}|{name}|{date}").hexdigest()[:8]` — deterministic, replayable, idempotent.
 
-Agent:
-```python
-booking_agent = Agent(
-    name="booking_agent",
-    model="gpt-5.5-2026-04-23",
-    tools=[book_flight, book_hotel, book_attraction],
-    output_type=BookingResult,
-)
-```
-
-Wire-up: runs AFTER `enricher` (depends on hotel/flight selections), in parallel with `narrator_agent`. Result merged into `ItineraryOutput.bookings`.
+Wire-up: `booking_agent` runs in parallel with `narrator_agent` (both depend only on `enriched`). Result merged into `ItineraryOutput.bookings`.
 
 **Non-negotiables**:
-- `is_mock=True` on every item, even Duffel (the airline is sandbox-fake).
-- `status="confirmed"` ONLY when `source="duffel_sandbox"`. All other sources use `status="reserved"`.
-- `DUFFEL_TEST_TOKEN` startup-asserted to contain `_test_`. Production token aborts startup.
-- Duffel call timeboxed 8s. On timeout/5xx, fall back to deep-link composer with `TC-MOCK-...` id and `source="booking_deeplink"`.
-- Pre-existing `hotel_booking_url` / `flight_booking_url` in `EnrichedContext` STAY — those are "view-this-place" links, separate from the booking confirmation overlay.
-- New HTTP dep: `uv add httpx>=0.27` (one call to Duffel, no Duffel SDK).
+- `is_mock=True` on EVERY `BookingItem` — fulfillment is always simulated.
+- **Payment ≠ fulfillment.** `status` (`reserved`/`confirmed`) is fulfillment; the agentic payment lives ONLY in `settlement`. `status="confirmed"` is reserved for the deprecated `duffel_sandbox` path; all mock deep-link items are `"reserved"`.
+- While `is_mock_settlement=True`, `payment_status` MUST be `"mock"` (never `"settled"`) — don't let the demo claim a settlement that didn't happen.
+- All payment env vars optional; `MockSettlementProvider` needs no network and never blocks the pipeline. `settle()` timeout-bound and never raises.
+- `source` union is FROZEN (`duffel_sandbox`/`booking_deeplink`/`klook_deeplink`). The payment rail lives in `settlement.payment_protocol`, not `source`.
+- Duffel is DEPRECATED: optional, skipped when no token; the `_test_` guard still applies when a token IS present (no production tokens).
+- Pre-existing `hotel_booking_url` / `flight_booking_url` in `EnrichedContext` STAY — those are "view-this-place" links, separate from the booking/payment overlay.
 
 ---
 
@@ -285,9 +367,11 @@ Wire-up: runs AFTER `enricher` (depends on hotel/flight selections), in parallel
 3. **Geocoding**: extractor uses `WebSearchTool` for `lat`/`lng`. Missing coords → drop the place.
 4. **Model**: `gpt-5.5-2026-04-23` primary; typed `except _MODEL_ERRORS` fallback to `gpt-4o`. No dated `gpt-4o-*` snapshots.
 5. **Latency**: backend auto-falls back to cache if live extraction > 80s (`_EXTRACTION_TIMEOUT`). All `/extract` and `/itinerary` JSON responses include `"source": "live" | "cache"`.
-6. **Booking realism**: every `BookingItem.is_mock` MUST be `True`. `status="confirmed"` ONLY when `source="duffel_sandbox"`. Code reviewer rejects violations.
+6. **Booking + payment realism**: every `BookingItem.is_mock` MUST be `True` (fulfillment is simulated). `status` is fulfillment-only — `"confirmed"` ONLY on the deprecated `source="duffel_sandbox"` path, else `"reserved"`. Agentic payment lives in `BookingItem.settlement`; while `is_mock_settlement=True`, `payment_status` MUST be `"mock"` (never `"settled"`). Code reviewer rejects violations.
 7. **Weather fallback**: Open-Meteo 5xx/timeout → return empty `day_forecasts`, never block the pipeline.
-8. **Schema-parity**: any new structured field added backend-side MUST land in `frontend/lib/trip/backend-types.ts` in the same PR. No orphan fields.
+8. **Schema-parity**: any new structured field added backend-side MUST land in `frontend/lib/trip/backend-types.ts` in the same PR — **additively** (never edit/remove an existing field or union member without a matching frontend change). No orphan fields.
+9. **Hotel 3-rec**: `/hotel-base` and `ItineraryOutput.hotel_options` MUST carry exactly 3 candidates with exactly one `is_best`/`selected_hotel_id`; cache load normalizes to 3.
+10. **Payment env optional**: `USE_CACHE=true` (the demo path) requires NO payment, Duffel, or facilitator env var. Nothing payment-related may abort startup.
 
 ---
 
@@ -335,9 +419,12 @@ Frontend `BackendExtractedPlace` mirrors this (snake_case) and does not consume 
 - Custom agent orchestrator (use Agents SDK)
 - Instagram Graph API / OAuth
 - Splitting `enricher` into per-vertical files (flat layout is fine)
-- Real booking checkout / production Duffel tokens / charging real money
-- MCP for Duffel / Open-Meteo (function tools are simpler — see specs above)
-- Reverting to pop-up book / react-pageflip / Google Maps (frontend has pivoted)
+- Real booking checkout / real fulfillment / charging real money (booking is ALWAYS mock)
+- Production Duffel tokens or reviving Duffel as primary (it is a deprecated optional fallback)
+- Mainnet USDC / real-money x402 settlement this round (testnet only, and that's Zhi Hao's next round)
+- MCP for payment / Open-Meteo (function tools + the PaymentProvider seam are simpler)
+- Reverting to pop-up book / flipbook / react-pageflip / Google Maps (frontend has pivoted to a Mapbox 3D map)
+- The 3D-map frontend revamp THIS round (backend-only this round; only `backend-types.ts` types are touched)
 - requirements.txt (use pyproject.toml via uv)
 
 ---

@@ -135,7 +135,21 @@ export type WeatherAdjustment = {
   weather_summary: string;
 };
 
-// Booking (from spike_booking.py) — every item is_mock=true; status="confirmed" only for Duffel sandbox.
+// Agentic payment (AP2 + x402, from spike_booking.py) — SEPARATE from booking fulfillment.
+// Mock this round: is_mock_settlement=true ⇒ payment_status="mock" (never "settled").
+export type PaymentSettlement = {
+  settlement_id: string;
+  payment_protocol: "ap2_x402";
+  payment_network: string; // "mock" | "base-sepolia" | "base"
+  payment_status: "mock" | "pending" | "settled" | "failed";
+  amount_sgd?: number | null;
+  is_mock_settlement: boolean;
+  notes?: string;
+};
+
+// Booking (from spike_booking.py) — every item is_mock=true (fulfillment is simulated).
+// status is fulfillment-only ("confirmed" only on the deprecated Duffel path); the agentic
+// payment lives in `settlement`. `source` union is frozen — payment rail is in settlement.payment_protocol.
 export type BookingItem = {
   booking_id: string;
   category: "flight" | "hotel" | "attraction";
@@ -146,12 +160,29 @@ export type BookingItem = {
   source: "duffel_sandbox" | "booking_deeplink" | "klook_deeplink";
   is_mock: boolean;
   notes: string;
+  settlement?: PaymentSettlement | null;
 };
 
 export type BookingResult = {
   items: BookingItem[];
   total_estimate_sgd: number;
   is_mock: boolean;
+  payment_protocol?: string;
+  total_settled_sgd?: number;
+  is_mock_settlement?: boolean;
+};
+
+// One of the 3 hotel recommendations on the itinerary (from spike_planner.py).
+// Exactly one has is_best=true (the recommended_hotel / selected_hotel_id).
+export type HotelOption = {
+  id: string;
+  name: string;
+  base_area_id?: string;
+  price_summary?: string;
+  booking_url?: string | null;
+  rationale?: string;
+  tradeoffs?: string[];
+  is_best: boolean;
 };
 
 export type BackendTripPayload = unknown;

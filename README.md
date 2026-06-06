@@ -1,10 +1,12 @@
 # TripCanvas
 
-AI-native travel planner — Instagram Reels → illustrated pop-up trip book. Hackathon submission for **Sea × OpenAI Codex Hackathon, 6 June 2026, Singapore** (code freeze 17:00 SGT).
+AI-native travel planner — Instagram Reels → live agent research → **Mapbox 3D map** itinerary with **agentic payment** (AP2 + x402). Hackathon submission for **Sea × OpenAI Codex Hackathon, 6 June 2026, Singapore** (code freeze 17:00 SGT).
+
+> **Pivot (2026-06-06):** TripCanvas moved off the flipbook/pop-up-book metaphor to a **Mapbox 3D map**, and off Duffel to an **AP2 + x402 agentic-payment seam** — the agent performs a *real* payment while the *booking stays mock*. The itinerary now surfaces **3 hotel recommendations + a best pick**. See [CLAUDE.md](CLAUDE.md) for the backend contracts and [AGENTS.md](AGENTS.md) for agent guidance.
 
 ---
 
-## Current State (2026-05-27)
+## Current State (2026-06-06)
 
 | Phase | What | Status |
 |---|---|---|
@@ -13,10 +15,10 @@ AI-native travel planner — Instagram Reels → illustrated pop-up trip book. H
 | 1.5 | Places → itinerary planner (`backend/spike_planner.py`) | ✅ ALL 6 gates pass, live URLs |
 | 2 | Unified e2e + planner driver (`backend/spike_e2e_planner.py`) | ✅ Codex 7.4/10 PASS, both cache + live paths work |
 | 4 | FastAPI `/extract` + `/itinerary` SSE (`backend/main.py`) | ✅ Codex 8.6/10 PASS, SSE contract verified |
-| 4.5 | Map render with clustered pins (Zhi Hao) | ⏳ unblocked — has SSE contract |
-| 5 | Pop-up book template (Zhi Hao) | ⏳ unblocked — has `data/planner_output.json` |
-| 6 | Frontend integration (paste → spinner → book) | ⏳ blocked on Phase 4.5 + 5 |
-| 7 | Hotel pin → streaming agent panel (Shaun) | ⏳ next Shaun task |
+| 4.5 | Hotel-base optimizer `/hotel-base` (3 recs + best pick) | ✅ `_MAX_HOTELS=3`, surfaced into `hotel_options` |
+| 5 | Agentic payment seam — AP2 + x402 (`spike_booking.py`) | 🟡 mock seam this round (`MockSettlementProvider`); real client = Zhi Hao next round |
+| 6 | **Mapbox 3D map** render with extracted-place pins (Shaun) | ⏳ next round (frontend revamp) |
+| 7 | 3D map → streaming AI agent panel (Shaun) | ⏳ next round |
 
 ---
 
@@ -107,15 +109,18 @@ Frontend **must** close `EventSource` on `data: [DONE]` (NOT on a `{type:"done"}
    │
    ▼  Top-5 by confidence (planner enricher budget)
    │
-[ data/places.json — top 5 places ]
+[ data/places.json — top 5 places ] ─────▶ frontend zooms the Mapbox 3D map
    │
-   ▼  Stage 3: enricher agent (parallel web_search: places + hotel + weather + flight)
+   ▼  (optional) /hotel-base: hotel_base_agent → 3 hotel candidates + best pick
+   │
+   ▼  Stage 3: enricher agent (parallel web_search: places + hotel + flight)  ║  weather_agent (Open-Meteo)
    │
 [EnrichedContext: hotel + flight + weather + per-place summaries]
    │
-   ▼  Stage 4: narrator agent (structured ItineraryOutput JSON)
+   ▼  Stage 4: narrator agent (ItineraryOutput JSON)  ║  booking_agent (deep links + PaymentProvider.settle → AP2/x402 mock)
    │
-[ ItineraryOutput → frontend pop-up book ]
+[ ItineraryOutput → Mapbox 3D map + streaming agent panel ]
+   • hotel_options[3, one is_best]   • bookings[items, each with a mock AP2/x402 settlement]
 ```
 
 ### Timeout budgets (`spike_e2e_planner.py`)
@@ -157,7 +162,7 @@ Both cache files are **committed to git** as a non-negotiable demo guardrail and
 ## Known Limitations
 
 1. **Cache files are demo-critical**. `backend/data/places.json` and `backend/data/planner_output.json` are committed to git as the demo safety net. If you wipe them locally, run `uv run python backend/spike_e2e_planner.py` once to re-seed before the demo.
-2. **Hotel choice is non-deterministic across runs** (Dormy Inn / Royal Park / Grand Hyatt have all appeared). Don't hardcode hotel names in the frontend — always render from `result.recommended_hotel`.
+2. **Hotel choice is non-deterministic across runs** (Dormy Inn / Royal Park / Grand Hyatt have all appeared). Don't hardcode hotel names in the frontend — render the best pick from `result.recommended_hotel` and the 3 options from `result.hotel_options` (highlight the one with `is_best=true`).
 3. **`_MAX_PLACES = 5` cap**. Raising this requires also bumping `_ENRICHER_TIMEOUT` in `spike_planner.py` (each extra place adds one web_search call).
 4. **`backend/data/e2e_planner_output.json`** — local debug duplicate of `planner_output.json`, safe to leave untracked.
 5. **No automated tests yet** — hackathon scope. Coverage relies on smoke tests + Codex peer review.
@@ -165,127 +170,27 @@ Both cache files are **committed to git** as a non-negotiable demo guardrail and
 
 ---
 
-## What I (Shaun) Should Do Next
+## Round Plan
 
-### A. Hotel pin → streaming agent panel (Phase 7)
+### This round — backend (done in this PR)
+- **Hotel 3-rec:** `spike_hotel_base.py` returns 3 candidates + a best pick (`selected_hotel_id`); surfaced into `ItineraryOutput.hotel_options` (one `is_best`).
+- **Agentic-payment seam:** `spike_booking.py` gains a `PaymentProvider` abstraction with a default, no-network `MockSettlementProvider`. Each `BookingItem` now carries an optional `settlement` (AP2/x402 `PaymentSettlement`). Booking stays mock (`is_mock=True`); payment is a separate, swappable record.
+- **Duffel deprecated:** optional fallback only (skipped when no `DUFFEL_TEST_TOKEN`); the `_test_` guard still applies when a token is set.
+- **Schema-parity:** new types mirrored additively in `frontend/lib/trip/backend-types.ts` (types only — no UI yet).
 
-**The "wow moment" of the demo.** After the pop-up book renders, the user sees a map with pins — one pin per place, including hotels. Clicking a hotel pin opens a side panel that **streams live agent reasoning in real time** as the AI thinks about *that specific hotel*.
+### Next round — Shaun: Mapbox 3D map frontend
+Rebuild the generation surface as a tilted/3D Mapbox map: globe → zoom into the extracted destination on `/extract` → place pins → streaming agent panel (consume `/itinerary` via `fetch()` streaming, close on `data: [DONE]`). Render hotels from `hotel_options` (highlight the `is_best`), and the payment overlay from `bookings[].settlement`. **Do not** revive the flipbook/pop-up book.
 
-The audience watches the AI literally calling tools and writing text token-by-token. It feels alive instead of canned.
+### Next round — Zhi Hao: real AP2 + x402 settlement
+Replace `MockSettlementProvider` with a real `PaymentProvider`:
+1. **AP2** — build + sign an Intent Mandate (the user's constraints) and a Cart Mandate (the specific cart), proving the human authorized the agent's purchase.
+2. **x402** — request the paid resource → receive `402 Payment Required` → sign + attach the `X-PAYMENT` header → CDP facilitator verifies + settles **testnet** USDC → return `payment_status="settled"`, `is_mock_settlement=False`, real `settlement_id`.
+The booking items remain `is_mock=True`; only the `settlement` becomes real. No mainnet, no real money.
 
-#### What the user sees on stage
-
-Panel opens. Inside, text streams letter-by-letter while tool badges appear:
-
-```
-  [🔍 web_search] "Dormy Inn Ueno Okachimachi reviews 2026"
-  → Found 3 results
-
-  [🔍 web_search] "Dormy Inn Ueno onsen rooftop bath"
-  → Found 5 results
-
-  Comparing rooftop hot spring access...
-
-  This property stands out for its rooftop onsen
-  open until 2 AM, which matches your "love onsen"
-  preference. Located 4 min walk from Okachimachi
-  station — strong walkability score.
-
-  [🔍 web_search] "Dormy Inn Ueno Okachimachi June 2026 rate"
-  → Current rate ~JPY 26,000/night
-
-  Recommendation: book directly via booking.com to
-  lock the current rate; cancellation is free until...
-```
-
-#### How this differs from `/itinerary` (already built)
-
-| Aspect | `/itinerary` (built) | `/agent/hotel` (Phase 7) |
-|--------|---------------------|-------------------------|
-| What it streams | **Stage markers** (`start`, `heartbeat`, `result`, `[DONE]`) | **Raw agent activity** (token-by-token text, tool call events, tool outputs) |
-| Granularity | 4 milestones | hundreds of token-level events |
-| Trigger | Initial submit ("generate my trip") | Pin click ("tell me about this hotel") |
-| Backing API | `Runner.run()` + custom SSE wrapping | `Runner.run_streamed()` from Agents SDK (built-in event stream) |
-| Duration | 122-170s | 5-15s typically — one focused topic |
-| Demo purpose | "Plan my trip" → fast result | "Show me you're thinking" → agentic narrative |
-
-#### Why this matters for hackathon scoring
-
-Hackathon judges have seen 100 "AI travel planner" demos. They've seen output. They have NOT seen agents thinking in front of them in real time. This feature is the priority because it makes the agentic-AI nature **visible to the audience** — without it, the demo is indistinguishable from a static itinerary generator with prerendered results.
-
-The OpenAI Agents SDK natively supports this via `Runner.run_streamed()`, which yields three event types you'd forward to SSE:
-
-- `raw_response_event` — partial text tokens (gives the "ChatGPT typing" feel)
-- `run_item_stream_event` — tool calls and tool outputs (gives the badges)
-- `agent_updated_stream_event` — agent identity changes (handoffs)
-
-#### Concrete sketch
-
-```python
-# backend/lib/agents/hotels.py
-hotels_agent = Agent(
-    name="hotels_specialist",
-    model="gpt-5.5-2026-04-23",
-    tools=[WebSearchTool(search_context_size="high")],
-    instructions="Deep-dive on a specific hotel: amenities, reviews, location quality, current rate.",
-)
-
-# backend/main.py — new endpoint
-class HotelQuery(BaseModel):
-    hotel_name: str
-    destination: str
-    start_date: str
-    end_date: str
-    free_text: str = ""
-
-@app.post("/agent/hotel")
-async def hotel_agent_stream(req: HotelQuery):
-    prompt = (
-        f"Tell me about {req.hotel_name} in {req.destination} for stays "
-        f"between {req.start_date} and {req.end_date}. User notes: {req.free_text}"
-    )
-
-    async def stream():
-        result = Runner.run_streamed(hotels_agent, prompt)
-        async for event in result.stream_events():
-            if event.type == "raw_response_event":
-                # token-level text delta
-                yield f"data: {json.dumps({'type':'token','delta':event.data.delta})}\n\n"
-            elif event.type == "run_item_stream_event":
-                # tool call started / output received
-                yield f"data: {json.dumps({'type':'tool','name':event.item.name,'status':event.item.status})}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
-```
-
-**Effort:** ~1-2 hours. The agent is roughly a stripped-down copy of the enricher's hotel-search logic. The streaming wrapping is the new part — and the Agents SDK does the heavy lifting via `Runner.run_streamed()`.
-
-**Frontend contract:** Zhi Hao's hotel-pin click handler opens `EventSource` to `POST /agent/hotel`, then renders each event as it arrives — tool badges materialize, text streams in. Close on `data: [DONE]` per the same SSE contract as `/itinerary`.
-
-### B. Respond fast to Zhi Hao's integration questions
-
-He has everything he needs to start the pop-up book:
-- A real SSE endpoint at `POST http://localhost:8000/itinerary`
-- The exact event shape (`start`, `heartbeat`, `result`, `[DONE]`)
-- A real seeded itinerary in `backend/data/planner_output.json` for offline template work
-- Real booking URLs to wire into "Book hotel" / "Book flight" buttons
-
-When he hits CORS, schema, or contract issues, unblock him immediately — pop-up book is the visual differentiator.
-
-### C. (Nice to have) `.gitignore` the debug artifact
-
-Add `backend/data/e2e_planner_output.json` to `.gitignore` so it stops appearing in `git status`. One-line change.
-
-### D. (Pre-demo prep) Rehearse the live path once
-
-Once before the demo:
-1. Delete `backend/data/places.json` + `backend/data/planner_output.json`
-2. Run `uv run python backend/spike_e2e_planner.py`
-3. Confirm completion in <500s with real URLs
-4. Commit the refreshed cache files
-
-This validates Apify quota + OpenAI auth + network conditions on the venue side.
+### Pre-demo prep
+- Default to `USE_CACHE=true` for the demo path (no payment/Duffel/facilitator env vars needed).
+- Optionally re-seed live: `uv run python backend/spike_e2e_planner.py` (validates Apify quota + OpenAI auth + network), then commit the refreshed `data/*.json`.
+- **One canonical itinerary result:** `backend/data/planner_output.json` is the single source of truth teammates consume — keep it to one file (no `sample_*`/`e2e_*` duplicates).
 
 ---
 
@@ -313,13 +218,16 @@ tripcanvas/
 │   ├── main.py                        # FastAPI app: /extract + /itinerary SSE
 │   ├── spike.py                       # Phase 0  — Apify MCP probe
 │   ├── spike_e2e.py                   # Phase 0.5 — reels → places (4 reels, 9 places verified)
-│   ├── spike_planner.py               # Phase 1.5 — places → itinerary (4-day verified)
+│   ├── spike_planner.py               # Phase 1.5 — places → itinerary (+ hotel_options)
+│   ├── spike_hotel_base.py            # hotel-base optimizer — 3 recs + best pick
+│   ├── spike_booking.py               # booking deep links + PaymentProvider seam (AP2/x402; Duffel deprecated)
 │   ├── spike_e2e_planner.py           # Phase 2   — unified driver, both cache + live paths work
-│   └── data/
-│       ├── places.json                # 9-place cache (committed)
-│       ├── planner_output.json        # itinerary fallback (committed)
-│       └── e2e_planner_output.json    # debug duplicate (untracked)
-└── frontend/                          # Zhi Hao territory (Next.js + react-pageflip)
+│   └── data/                          # exactly one JSON per purpose — no duplicates
+│       ├── places.json                # extraction cache (committed)
+│       ├── hotel_base_output.json     # hotel-base cache (committed; 3 candidates + best pick)
+│       └── planner_output.json        # THE single canonical itinerary result (committed;
+│                                      #   real verified run — hotel_options + per-item AP2/x402 settlements)
+└── frontend/                          # Next.js 15 + Mapbox GL JS 3D map (NOT a flipbook)
 ```
 
 ---
@@ -327,9 +235,26 @@ tripcanvas/
 ## Required Env Vars (in `.env` at project root)
 
 ```
+# Required
 OPENAI_API_KEY=sk-...
 APIFY_TOKEN=apify_api_...
+
+# Optional (USE_CACHE=true demo path needs none of these)
 DEMO_REEL_URLS=url1,url2,url3,url4
-GOOGLE_MAPS_API_KEY=...               # needed by frontend only
-USE_CACHE=                            # set to "true" to skip live extraction
+USE_CACHE=                            # "true" to skip live extraction
+BOOKING_AID=                          # optional Booking.com affiliate id
+
+# Agentic payment (AP2 + x402) — Zhi Hao; all optional, mock by default
+USE_MOCK_PAYMENT=true                 # "false" → real provider (next round)
+X402_FACILITATOR_URL=                 # x402 verify+settle endpoint (CDP). Unused while mock
+PAYMENT_NETWORK=mock                  # "base-sepolia" testnet | "base" | "mock"
+AP2_MANDATE_SIGNING_KEY=              # AP2 Intent/Cart mandate signing key (placeholder)
+X402_PAYER_ADDRESS=                   # agent wallet for testnet USDC (placeholder)
+
+# Deprecated (optional fallback only)
+DUFFEL_TEST_TOKEN=                    # if set, MUST contain "_test_"; absent → Duffel skipped
+
+# Frontend (frontend/.env)
+NEXT_PUBLIC_MAPBOX_TOKEN=...          # Mapbox GL JS token
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```

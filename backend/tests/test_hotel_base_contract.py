@@ -15,7 +15,7 @@ from backend.spike_hotel_base import (
 
 
 class HotelBaseContractTests(unittest.TestCase):
-    def test_fallback_result_has_selected_base_and_two_hotels(self):
+    def test_fallback_result_has_selected_base_and_three_hotels(self):
         places = [
             {
                 "name": "Dotonbori",
@@ -47,9 +47,13 @@ class HotelBaseContractTests(unittest.TestCase):
         self.assertIsInstance(result, HotelBaseResult)
         self.assertEqual(result.source, "cache")
         self.assertGreaterEqual(len(result.base_areas), 1)
-        self.assertEqual(len(result.hotel_candidates), 2)
+        self.assertEqual(len(result.hotel_candidates), 3)
         self.assertEqual(result.selected_base.id, result.hotel_candidates[0].base_area_id)
         self.assertEqual(result.selected_hotel_id, result.hotel_candidates[0].id)
+        # Invariant: all 3 candidates belong to the selected base.
+        self.assertTrue(
+            all(h.base_area_id == result.selected_base.id for h in result.hotel_candidates)
+        )
 
     def test_candidate_scores_are_bounded(self):
         candidate = BaseAreaCandidate(
@@ -150,22 +154,27 @@ class HotelBaseContractTests(unittest.TestCase):
                 booking_url=None,
                 rationale="Rationale",
             )
-            for idx in range(3)
+            for idx in range(4)  # > _MAX_HOTELS=3, forces truncation
         ]
 
+        # selected_hotel_id="hotel-3" would be dropped by naive truncation — must survive.
         result = normalize_live_hotel_base_result(
             selected_base=base_areas[4],
             base_areas=base_areas,
             hotel_candidates=hotels,
-            selected_hotel_id="hotel-2",
+            selected_hotel_id="hotel-3",
         )
 
         self.assertEqual(result.selected_base.id, "base-4")
         self.assertIn("base-4", [candidate.id for candidate in result.base_areas])
         self.assertEqual(len(result.base_areas), 4)
-        self.assertEqual(result.selected_hotel_id, "hotel-2")
-        self.assertIn("hotel-2", [candidate.id for candidate in result.hotel_candidates])
-        self.assertEqual(len(result.hotel_candidates), 2)
+        self.assertEqual(result.selected_hotel_id, "hotel-3")
+        self.assertEqual(result.hotel_candidates[0].id, "hotel-3")  # best pick first
+        self.assertIn("hotel-3", [candidate.id for candidate in result.hotel_candidates])
+        self.assertEqual(len(result.hotel_candidates), 3)
+        self.assertTrue(
+            all(h.base_area_id == "base-4" for h in result.hotel_candidates)
+        )
 
     def test_live_result_uses_first_hotel_when_selected_hotel_id_is_invalid(self):
         selected_base = BaseAreaCandidate(
@@ -209,6 +218,11 @@ class HotelBaseContractTests(unittest.TestCase):
         self.assertEqual(result.selected_hotel_id, "hotel-1")
         self.assertEqual(result.hotel_candidates[0].id, "hotel-1")
         self.assertEqual(result.selected_base.id, result.base_areas[0].id)
+        # Under-returned (2 input) → padded deterministically to exactly 3.
+        self.assertEqual(len(result.hotel_candidates), 3)
+        self.assertTrue(
+            all(h.base_area_id == selected_base.id for h in result.hotel_candidates)
+        )
 
 
 if __name__ == "__main__":

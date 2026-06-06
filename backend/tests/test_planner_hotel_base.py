@@ -9,8 +9,56 @@ from backend.spike_planner import (  # noqa: E402
     PlaceResult,
     UserPreferences,
     _authoritative_hotel_choice,
+    _build_hotel_options,
     _narrator_prompt,
 )
+
+
+class BuildHotelOptionsTests(unittest.TestCase):
+    def test_maps_candidates_and_flags_selected_best(self):
+        hotel_base = {
+            "selected_hotel_id": "hotel-2",
+            "hotel_candidates": [
+                {"id": "hotel-1", "name": "Runner Up", "price_summary": "Budget",
+                 "booking_url": "https://www.hyatt.com/h/one", "rationale": "ok",
+                 "tradeoffs": ["smaller rooms"]},
+                {"id": "hotel-2", "name": "Best Pick", "price_summary": "Mid",
+                 "booking_url": "https://www.hyatt.com/h/two", "rationale": "best",
+                 "tradeoffs": []},
+                {"id": "hotel-3", "name": "Upgrade", "price_summary": "Luxury",
+                 "booking_url": None, "rationale": "pricey", "tradeoffs": []},
+            ],
+        }
+        options = _build_hotel_options(hotel_base)
+        self.assertEqual(len(options), 3)
+        best = [o for o in options if o.is_best]
+        self.assertEqual([o.name for o in best], ["Best Pick"])
+
+    def test_no_hotel_base_returns_empty(self):
+        self.assertEqual(_build_hotel_options(None), [])
+
+    def test_missing_selected_id_flags_first_as_best(self):
+        hotel_base = {
+            "selected_hotel_id": "nope",
+            "hotel_candidates": [
+                {"id": "h1", "name": "First"},
+                {"id": "h2", "name": "Second"},
+            ],
+        }
+        options = _build_hotel_options(hotel_base)
+        self.assertTrue(options[0].is_best)
+        self.assertEqual(sum(o.is_best for o in options), 1)
+
+    def test_search_page_booking_url_is_dropped(self):
+        hotel_base = {
+            "selected_hotel_id": "h1",
+            "hotel_candidates": [
+                {"id": "h1", "name": "X",
+                 "booking_url": "https://www.booking.com/searchresults.html?ss=Tokyo"},
+            ],
+        }
+        options = _build_hotel_options(hotel_base)
+        self.assertIsNone(options[0].booking_url)  # search page rejected by _clean_place_url
 
 
 class PlannerHotelBaseTests(unittest.TestCase):

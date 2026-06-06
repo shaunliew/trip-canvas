@@ -1,18 +1,31 @@
-"""booking_agent — DEMO-SAFE booking confirmations for the TripCanvas demo.
+"""booking_agent — DEMO-SAFE bookings + agentic payment for the TripCanvas demo.
 
-Produces booking confirmations safe to demo on stage:
-  - Flights call Duffel's sandbox API (test-mode tokens only, $0 real-money
-    risk; test airline is "Duffel Airways"). Falls back to a Skyscanner deep
-    link composer if no test token is configured or the sandbox call fails.
-  - Hotels and attractions are pure URL composers (Booking.com / Klook
-    searches) — no API auth, status is always "reserved".
+Bookings are MOCK fulfillment (deep links). The headline is the AGENTIC PAYMENT:
+AP2 (Agent Payments Protocol — signed Intent/Cart mandates = authorization) +
+x402 (Coinbase HTTP-402 → X-PAYMENT header → facilitator settles USDC =
+settlement), modeled behind a `PaymentProvider` seam so the real client can be
+dropped in without touching the booking flow.
+
+  - Flights: Skyscanner deep-link composer (default). Duffel sandbox is a
+    DEPRECATED optional fallback — used only if DUFFEL_TEST_TOKEN is set.
+  - Hotels and attractions: pure URL composers (Booking.com / Klook) — no auth,
+    status="reserved".
+  - Payment: each BookingItem carries an optional `settlement` (PaymentSettlement)
+    produced by a PaymentProvider. The default MockSettlementProvider is
+    deterministic and does NO network I/O. Zhi Hao swaps in a real AP2 + x402
+    provider next round.
 
 INVARIANTS (the code reviewer will reject violations):
-  1. Every BookingItem.is_mock is True.
-  2. status="confirmed" ONLY when source="duffel_sandbox".
-  3. DUFFEL_TEST_TOKEN, if present, MUST contain "_test_".
+  1. Every BookingItem.is_mock is True (fulfillment is always simulated).
+  2. PAYMENT != FULFILLMENT. status ("reserved"/"confirmed") is fulfillment;
+     "confirmed" is reserved for the DEPRECATED source="duffel_sandbox" path.
+     The agentic payment lives ONLY in BookingItem.settlement.
+  3. While settlement.is_mock_settlement is True, payment_status MUST be "mock"
+     (never "settled") — don't claim a settlement that didn't happen.
+  4. DUFFEL_TEST_TOKEN, if present, MUST contain "_test_". Absent → Duffel skipped
+     (no startup abort). All payment env vars are optional.
 
-The three @function_tools NEVER raise.
+The three @function_tools NEVER raise. PaymentProvider.settle NEVER raises.
 """
 
 from __future__ import annotations
@@ -21,6 +34,7 @@ import asyncio
 import hashlib
 import logging
 import os
+from abc import ABC, abstractmethod
 from typing import Any, Literal, Optional
 from urllib.parse import quote_plus, urlencode
 
@@ -43,18 +57,28 @@ _MODEL_ERRORS = (openai.NotFoundError, openai.BadRequestError, openai.Permission
 _BOOKING_AGENT_TIMEOUT = 25.0  # 5 attractions x 3s + hotel 1s + flight 8s + model 6s
 _DUFFEL_URL = "https://api.duffel.com"
 _DUFFEL_TIMEOUT = 8.0  # combined budget for both Duffel calls
+_SETTLEMENT_TIMEOUT = 8.0  # per-item PaymentProvider.settle budget (real x402 next round)
 
 _BOOKING_AID = os.environ.get("BOOKING_AID", "").strip()
+
+# --- Agentic payment (AP2 + x402) — all env optional; mock by default ---
+_USE_MOCK_PAYMENT = os.environ.get("USE_MOCK_PAYMENT", "true").strip().lower() != "false"
+_PAYMENT_NETWORK = os.environ.get("PAYMENT_NETWORK", "mock").strip() or "mock"
+
+# --- Duffel (DEPRECATED optional fallback) ---
 _DUFFEL_TOKEN = os.environ.get("DUFFEL_TEST_TOKEN", "").strip()
 _DUFFEL_ENABLED = bool(_DUFFEL_TOKEN) and "_test_" in _DUFFEL_TOKEN
 
 if _DUFFEL_TOKEN and not _DUFFEL_ENABLED:
+    # Guard still enforced WHEN a token is present — never call Duffel in prod mode.
     raise RuntimeError(
         "DUFFEL_TEST_TOKEN does not contain '_test_'. Refusing to call Duffel in "
         "non-test mode. Get a test-mode token at app.duffel.com (Developer test mode)."
     )
-if not _DUFFEL_ENABLED:
-    logger.info("DUFFEL_TEST_TOKEN not set — book_flight will use deep-link fallback only.")
+if _DUFFEL_ENABLED:
+    logger.info("DUFFEL_TEST_TOKEN set — Duffel sandbox enabled (DEPRECATED fallback path).")
+else:
+    logger.info("Duffel disabled (no DUFFEL_TEST_TOKEN) — book_flight uses deep-link composer.")
 
 
 # ---------------------------------------------------------------------------
@@ -62,22 +86,174 @@ if not _DUFFEL_ENABLED:
 # ---------------------------------------------------------------------------
 
 
+class PaymentSettlement(BaseModel):
+    """The AGENTIC-PAYMENT record (AP2 + x402) — SEPARATE from booking fulfillment.
+
+    Mock this round (is_mock_settlement=True, payment_status="mock"). When Zhi Hao
+    wires a real provider, x402 settles testnet USDC → payment_status="settled",
+    is_mock_settlement=False, settlement_id = the real tx reference.
+    """
+
+    settlement_id: str                                   # "ap2-mock-{sha1[:10]}" | real x402 tx ref
+    payment_protocol: Literal["ap2_x402"] = "ap2_x402"
+    payment_network: str = "mock"                        # "mock" | "base-sepolia" | "base"
+    payment_status: Literal["mock", "pending", "settled", "failed"] = "mock"
+    amount_sgd: Optional[float] = None
+    is_mock_settlement: bool = True                      # True until a real x402 settlement lands
+    notes: str = ""
+
+
 class BookingItem(BaseModel):
     booking_id: str
     category: Literal["flight", "hotel", "attraction"]
     name: str
     price_estimate_sgd: Optional[float] = None
-    status: Literal["confirmed", "reserved"]
+    status: Literal["confirmed", "reserved"]  # FULFILLMENT, not payment
     book_url: str
     source: Literal["duffel_sandbox", "booking_deeplink", "klook_deeplink"]
     is_mock: bool  # ALWAYS True — invariant enforced at tool layer
     notes: str
+    settlement: Optional[PaymentSettlement] = None  # agentic-payment record; None until settled
 
 
 class BookingResult(BaseModel):
     items: list[BookingItem] = Field(default_factory=list)
     total_estimate_sgd: float = 0.0
     is_mock: bool = True
+    payment_protocol: str = "ap2_x402"
+    total_settled_sgd: float = 0.0
+    is_mock_settlement: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Payment seam (AP2 + x402) — swap MockSettlementProvider for a real provider
+# ---------------------------------------------------------------------------
+
+
+class PaymentProvider(ABC):
+    """Agentic-payment seam. Implementations authorize (AP2 mandates) and settle
+    (x402) a payment, returning a PaymentSettlement. MUST be timeout-bound by the
+    caller and MUST NOT raise (return a failed/mock settlement instead)."""
+
+    @abstractmethod
+    async def settle(
+        self,
+        *,
+        reference: str,
+        amount_sgd: Optional[float],
+        category: str,
+        name: str,
+    ) -> PaymentSettlement:
+        ...
+
+
+class MockSettlementProvider(PaymentProvider):
+    """Default provider — deterministic, NO network I/O. Same inputs → same id.
+
+    Produces a clearly-mock AP2/x402 settlement: payment_status="mock" while
+    is_mock_settlement=True (invariant #3). Zhi Hao replaces this with a real
+    provider that builds + signs AP2 Intent/Cart mandates and drives an x402
+    HTTP-402 → X-PAYMENT → facilitator settlement over testnet USDC.
+    """
+
+    def __init__(self, payment_network: str = "mock") -> None:
+        self._network = payment_network or "mock"
+
+    async def settle(
+        self,
+        *,
+        reference: str,
+        amount_sgd: Optional[float],
+        category: str,
+        name: str,
+    ) -> PaymentSettlement:
+        settlement_id = "ap2-mock-" + hashlib.sha1(
+            f"{category}|{name}|{reference}".encode("utf-8")
+        ).hexdigest()[:10]
+        return PaymentSettlement(
+            settlement_id=settlement_id,
+            payment_protocol="ap2_x402",
+            payment_network=self._network,
+            payment_status="mock",          # NEVER "settled" while mock (invariant #3)
+            amount_sgd=amount_sgd,
+            is_mock_settlement=True,
+            notes=(
+                "Mock AP2/x402 settlement (no funds moved). Real provider injectable "
+                "via book_trip(payment_provider=...)."
+            ),
+        )
+
+
+def _default_payment_provider() -> PaymentProvider:
+    """The provider used when book_trip is called without an explicit one.
+
+    This round always returns MockSettlementProvider (USE_MOCK_PAYMENT defaults
+    true). When Zhi Hao lands the real provider, wire it here behind
+    USE_MOCK_PAYMENT=false.
+    """
+    if _USE_MOCK_PAYMENT:
+        return MockSettlementProvider(payment_network=_PAYMENT_NETWORK)
+    # Real AP2 + x402 provider not wired yet — fail safe to mock so the demo never breaks.
+    logger.warning("USE_MOCK_PAYMENT=false but no real provider wired yet — using mock.")
+    return MockSettlementProvider(payment_network=_PAYMENT_NETWORK)
+
+
+def _failed_mock_settlement(item: BookingItem, reason: str) -> PaymentSettlement:
+    return PaymentSettlement(
+        settlement_id="ap2-mock-failed-" + hashlib.sha1(item.booking_id.encode()).hexdigest()[:8],
+        payment_network=_PAYMENT_NETWORK,
+        payment_status="failed",
+        amount_sgd=item.price_estimate_sgd,
+        is_mock_settlement=True,
+        notes=reason,
+    )
+
+
+def _enforce_settlement_invariants(
+    settlement: object, item: BookingItem
+) -> PaymentSettlement:
+    """Central guardrail over ANY provider's return (incl. Zhi Hao's real one).
+
+    The seam must not trust injected providers blindly:
+      - non-PaymentSettlement → failed mock,
+      - invariant #3: a mock settlement (is_mock_settlement=True) may NEVER claim
+        payment_status="settled" → coerce to "mock".
+    """
+    if not isinstance(settlement, PaymentSettlement):
+        logger.warning(
+            "Provider returned %s (not PaymentSettlement) for %s; using failed mock",
+            type(settlement).__name__, item.booking_id,
+        )
+        return _failed_mock_settlement(item, "Provider returned an invalid settlement type.")
+    if settlement.is_mock_settlement and settlement.payment_status == "settled":
+        logger.warning(
+            "Mock settlement claimed 'settled' for %s; coercing to 'mock' (invariant #3)",
+            item.booking_id,
+        )
+        return settlement.model_copy(update={"payment_status": "mock"})
+    return settlement
+
+
+async def _settle_item(
+    provider: PaymentProvider, item: BookingItem
+) -> PaymentSettlement:
+    """Run provider.settle for one item under a wall budget. Never raises —
+    returns a failed mock settlement on timeout/error so the pipeline continues.
+    The provider's return is always run through _enforce_settlement_invariants."""
+    try:
+        settlement = await asyncio.wait_for(
+            provider.settle(
+                reference=item.booking_id,
+                amount_sgd=item.price_estimate_sgd,
+                category=item.category,
+                name=item.name,
+            ),
+            timeout=_SETTLEMENT_TIMEOUT,
+        )
+    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001 — settlement must never break booking
+        logger.warning("settle failed for %s (%s); recording failed mock settlement", item.booking_id, exc)
+        return _failed_mock_settlement(item, f"Settlement unavailable ({type(exc).__name__}); booking still reserved.")
+    return _enforce_settlement_invariants(settlement, item)
 
 
 # ---------------------------------------------------------------------------
@@ -422,8 +598,16 @@ async def book_trip(
     recommended_flight: str,
     origin_city: Optional[str],
     attractions: list[str],
+    payment_provider: Optional[PaymentProvider] = None,
 ) -> BookingResult:
-    """Run booking_agent under a 25s wall budget. Always returns — never raises."""
+    """Run booking_agent under a 25s wall budget, then settle each booking via the
+    PaymentProvider (AP2 + x402). Always returns — never raises.
+
+    `payment_provider` defaults to MockSettlementProvider (no network). Zhi Hao
+    passes a real AP2 + x402 provider to perform a genuine agentic payment; the
+    booking items stay is_mock=True regardless.
+    """
+    provider = payment_provider or _default_payment_provider()
     prompt = _booking_prompt(
         destination_city, start_date, end_date,
         recommended_hotel, recommended_flight, origin_city, attractions,
@@ -438,23 +622,44 @@ async def book_trip(
         return BookingResult(items=[], total_estimate_sgd=0.0, is_mock=True)
 
     final = run_result.final_output
-    if isinstance(final, BookingResult):
-        # Hard-enforce both invariants regardless of model output:
-        #   (1) is_mock=True on every item
-        #   (2) status="confirmed" ONLY when source="duffel_sandbox" — demote otherwise.
-        sanitized: list[BookingItem] = []
-        for item in final.items:
-            updates: dict[str, Any] = {"is_mock": True}
-            if item.status == "confirmed" and item.source != "duffel_sandbox":
-                logger.warning(
-                    "Demoting status='confirmed' to 'reserved' for non-sandbox item %s (source=%s)",
-                    item.booking_id, item.source,
-                )
-                updates["status"] = "reserved"
-            sanitized.append(item.model_copy(update=updates))
-        return BookingResult(items=sanitized, total_estimate_sgd=final.total_estimate_sgd, is_mock=True)
-    logger.warning("booking_agent returned non-BookingResult: %s", type(final))
-    return BookingResult(items=[], total_estimate_sgd=0.0, is_mock=True)
+    if not isinstance(final, BookingResult):
+        logger.warning("booking_agent returned non-BookingResult: %s", type(final))
+        return BookingResult(items=[], total_estimate_sgd=0.0, is_mock=True)
+
+    # Hard-enforce fulfillment invariants regardless of model output:
+    #   (1) is_mock=True on every item
+    #   (2) status="confirmed" ONLY for the deprecated source="duffel_sandbox" — demote otherwise.
+    sanitized: list[BookingItem] = []
+    for item in final.items:
+        updates: dict[str, Any] = {"is_mock": True}
+        if item.status == "confirmed" and item.source != "duffel_sandbox":
+            logger.warning(
+                "Demoting status='confirmed' to 'reserved' for non-sandbox item %s (source=%s)",
+                item.booking_id, item.source,
+            )
+            updates["status"] = "reserved"
+        sanitized.append(item.model_copy(update=updates))
+
+    # Agentic payment: settle each booking concurrently via the PaymentProvider.
+    # Payment is SEPARATE from fulfillment — items stay is_mock=True; settlement
+    # carries the (mock this round) AP2/x402 record.
+    settlements = await asyncio.gather(*(_settle_item(provider, it) for it in sanitized))
+    settled_items = [
+        it.model_copy(update={"settlement": s}) for it, s in zip(sanitized, settlements)
+    ]
+    total_settled = sum(
+        s.amount_sgd for s in settlements
+        if s.payment_status in ("settled", "mock") and s.amount_sgd is not None
+    )
+    any_real = any(not s.is_mock_settlement for s in settlements)
+    return BookingResult(
+        items=settled_items,
+        total_estimate_sgd=final.total_estimate_sgd,
+        is_mock=True,
+        payment_protocol="ap2_x402",
+        total_settled_sgd=round(total_settled, 2),
+        is_mock_settlement=not any_real,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +693,15 @@ if __name__ == "__main__":
             assert item.source == "duffel_sandbox", (
                 f"confirmed only with duffel_sandbox, got {item.source}"
             )
+        assert item.settlement is not None, f"missing settlement for {item.booking_id}"
+        if item.settlement.is_mock_settlement:
+            assert item.settlement.payment_status != "settled", (
+                f"mock settlement must not be 'settled' for {item.booking_id}"
+            )
+        assert item.settlement.payment_protocol == "ap2_x402"
     print(
         f"\n{len(result.items)} bookings, total ~SGD "
-        f"{result.total_estimate_sgd:.2f}, mock={result.is_mock}"
+        f"{result.total_estimate_sgd:.2f}, mock={result.is_mock}; "
+        f"payment={result.payment_protocol}, settled ~SGD {result.total_settled_sgd:.2f}, "
+        f"mock_settlement={result.is_mock_settlement}"
     )
