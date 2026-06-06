@@ -2,8 +2,6 @@
 
 AI-native travel planner — Instagram Reels → illustrated pop-up trip book. Hackathon submission for **Sea × OpenAI Codex Hackathon, 6 June 2026, Singapore** (code freeze 17:00 SGT).
 
-> See [CLAUDE.md](./CLAUDE.md) for stack constraints, architectural decisions, and non-negotiable demo guardrails.
-
 ---
 
 ## Current State (2026-05-27)
@@ -134,7 +132,7 @@ Frontend **must** close `EventSource` on `data: [DONE]` (NOT on a `{type:"done"}
 2. Live extraction exceeds `_EXTRACTION_TIMEOUT` OR returns empty → load `data/places.json`
 3. Planner exception OR `_PIPELINE_TIMEOUT` → return last `data/planner_output.json`
 
-Both cache files are **committed to git** per CLAUDE.md §"Non-Negotiable Demo Guardrails #1" and **self-refresh** on every successful live run.
+Both cache files are **committed to git** as a non-negotiable demo guardrail and **self-refresh** on every successful live run.
 
 ---
 
@@ -150,7 +148,7 @@ Both cache files are **committed to git** per CLAUDE.md §"Non-Negotiable Demo G
 
 - `GET /health` → 200 in <1s
 - `POST /extract` → 200 in 81.5s (cache fallback at 80s budget), 9 places returned
-- `POST /itinerary` SSE → 27 events in 122s, all CLAUDE.md contract checks pass
+- `POST /itinerary` SSE → 27 events in 122s, all SSE contract checks pass
 - All 6 validation probes (empty body, missing field, enum constraints, list bounds) return clean HTTP 422
 - `GET /openapi.json` exposes both endpoints with 200/422 schemas for frontend codegen
 
@@ -169,7 +167,7 @@ Both cache files are **committed to git** per CLAUDE.md §"Non-Negotiable Demo G
 
 ## What I (Shaun) Should Do Next
 
-### A. Hotel pin → streaming agent panel (Phase 7 per CLAUDE.md)
+### A. Hotel pin → streaming agent panel (Phase 7)
 
 **The "wow moment" of the demo.** After the pop-up book renders, the user sees a map with pins — one pin per place, including hotels. Clicking a hotel pin opens a side panel that **streams live agent reasoning in real time** as the AI thinks about *that specific hotel*.
 
@@ -213,7 +211,7 @@ Panel opens. Inside, text streams letter-by-letter while tool badges appear:
 
 #### Why this matters for hackathon scoring
 
-Hackathon judges have seen 100 "AI travel planner" demos. They've seen output. They have NOT seen agents thinking in front of them in real time. CLAUDE.md picked this specific feature because it makes the agentic-AI nature **visible to the audience** — without it, the demo is indistinguishable from a static itinerary generator with prerendered results.
+Hackathon judges have seen 100 "AI travel planner" demos. They've seen output. They have NOT seen agents thinking in front of them in real time. This feature is the priority because it makes the agentic-AI nature **visible to the audience** — without it, the demo is indistinguishable from a static itinerary generator with prerendered results.
 
 The OpenAI Agents SDK natively supports this via `Runner.run_streamed()`, which yields three event types you'd forward to SSE:
 
@@ -309,7 +307,6 @@ This validates Apify quota + OpenAI auth + network conditions on the venue side.
 ```
 tripcanvas/
 ├── README.md                          # this file
-├── CLAUDE.md                          # stack + non-negotiables
 ├── pyproject.toml                     # uv-managed deps (fastapi, openai-agents, etc)
 ├── .env                               # OPENAI_API_KEY, APIFY_TOKEN, DEMO_REEL_URLS
 ├── backend/
