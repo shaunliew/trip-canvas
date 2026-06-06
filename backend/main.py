@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from spike_agentic_payments import (
     AgenticHotelPaymentService,
@@ -62,6 +62,7 @@ from spike_planner import (
 from spike_hotel_base import (
     HotelBaseResult,
     HotelPreferenceInput,
+    load_cached_hotel_base_result,
     run_hotel_base_optimizer,
     sse_event as hotel_base_sse_event,
 )
@@ -110,6 +111,17 @@ class HotelBaseRequest(BaseModel):
     hotel_preferences: HotelPreferenceInput = Field(default_factory=HotelPreferenceInput)
 
 
+class DemoCacheResponse(BaseModel):
+    """Instant hackathon-safe payload: all three committed caches in one shot.
+
+    Read-only sibling to /extract + /itinerary — never runs live work or SSE.
+    """
+    source: str = "cache"
+    places: list[dict]
+    hotel_base: dict
+    itinerary: dict
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -118,6 +130,65 @@ class HotelBaseRequest(BaseModel):
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "tripcanvas-backend"}
+
+
+# ---------------------------------------------------------------------------
+# /demo-cache — instant, read-only replay of all three committed caches
+# ---------------------------------------------------------------------------
+
+# Any of these from a cache file means "missing or invalid" → clean 503 (never a 500 leak).
+# OSError covers missing/unreadable files (FileNotFoundError + permission errors); TypeError
+# covers valid-JSON-but-wrong-shape (e.g. places.json is top-level `[]`/`null`, or
+# `"places": null`) where _load_cached_places does data["places"] + iterates.
+_CACHE_LOAD_ERRORS = (OSError, json.JSONDecodeError, KeyError, TypeError, ValidationError)
+
+
+@app.get("/demo-cache", response_model=DemoCacheResponse)
+def demo_cache() -> DemoCacheResponse:
+    """Return places + hotel_base + itinerary from the committed caches in one payload.
+
+    Pure read-only demo path: NO live extraction, hotel-base optimization, planner,
+    OpenAI/Apify calls, SSE, or cache writes. Any missing/invalid cache → HTTP 503.
+    """
+    try:
+        cached_places = _load_cached_places()
+    except _CACHE_LOAD_ERRORS as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"places cache missing or invalid: {exc}. Run /extract once to seed.",
+        ) from exc
+
+    try:
+        cached_hotel_base = load_cached_hotel_base_result()
+    except _CACHE_LOAD_ERRORS as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"hotel_base cache invalid: {exc}.",
+        ) from exc
+    if cached_hotel_base is None:
+        raise HTTPException(
+            status_code=503,
+            detail="hotel_base cache missing. Seed data/hotel_base_output.json.",
+        )
+
+    try:
+        cached_itinerary = _load_cached_itinerary()
+    except _CACHE_LOAD_ERRORS as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"itinerary cache invalid: {exc}.",
+        ) from exc
+    if cached_itinerary is None:
+        raise HTTPException(
+            status_code=503,
+            detail="itinerary cache missing. Seed data/planner_output.json.",
+        )
+
+    return DemoCacheResponse(
+        places=[p.model_dump(mode="json") for p in cached_places],
+        hotel_base=cached_hotel_base.model_dump(mode="json"),
+        itinerary=cached_itinerary.model_dump(mode="json"),
+    )
 
 
 # ---------------------------------------------------------------------------
