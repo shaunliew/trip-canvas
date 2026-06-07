@@ -19,10 +19,8 @@ Required env vars (loaded from .env at project root):
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from typing import Optional
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -31,7 +29,21 @@ load_dotenv(find_dotenv())
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from backend.api.schemas import (
+    DemoCacheResponse,
+    ExtractRequest,
+    ExtractResponse,
+    HotelBaseRequest,
+    ItineraryRequest,
+)
+from backend.api.streaming import (
+    CACHE_LOAD_ERRORS as _CACHE_LOAD_ERRORS,
+    HEARTBEAT_INTERVAL as _STREAMING_HEARTBEAT_INTERVAL,
+    cap_hotel_base_places as _streaming_cap_hotel_base_places,
+    hotel_base_stream as _streaming_hotel_base_stream,
+    itinerary_stream as _streaming_itinerary_stream,
+    sse_event as _streaming_sse_event,
+)
 
 from backend.spike_agentic_payments import (
     AP2HotelBookingMandateRequest,
@@ -44,31 +56,23 @@ from backend.spike_agentic_payments import (
 from backend.spike_e2e import PlaceResult as ExtractedPlace
 from backend.spike_e2e_planner import (
     _EXTRACTION_TIMEOUT,
-    _MAX_PLACES,
     _load_cached_itinerary,
     _load_cached_places,
-    _top_n_by_confidence,
     _write_cached_places,
     run_extraction,
 )
 from backend.spike_planner import (
-    PlaceResult as PlannerPlace,
-    UserPreferences,
-    _GLOBAL_TIMEOUT,
     run_planner,
 )
 from backend.spike_hotel_base import (
-    HotelBaseResult,
-    HotelPreferenceInput,
     load_cached_hotel_base_result,
     run_hotel_base_optimizer,
-    sse_event as hotel_base_sse_event,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-_HEARTBEAT_INTERVAL = 5.0  # seconds; keeps proxies + EventSource alive during the 170s planner wait
+_HEARTBEAT_INTERVAL = _STREAMING_HEARTBEAT_INTERVAL
 
 app = FastAPI(title="TripCanvas Backend", version="0.1.0")
 
@@ -80,44 +84,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ---------------------------------------------------------------------------
-# Request / response shapes
-# ---------------------------------------------------------------------------
-
-
-class ExtractRequest(BaseModel):
-    reel_urls: list[str] = Field(..., min_length=1, max_length=8)
-
-
-class ExtractResponse(BaseModel):
-    places: list[dict]
-    source: str           # "live" | "cache"
-    count: int
-
-
-class ItineraryRequest(BaseModel):
-    preferences: UserPreferences
-    places: Optional[list[dict]] = None   # if None ⇒ server loads from data/places.json
-    hotel_base: Optional[dict] = None
-
-
-class HotelBaseRequest(BaseModel):
-    preferences: UserPreferences
-    places: list[dict] = Field(..., min_length=1)
-    hotel_preferences: HotelPreferenceInput = Field(default_factory=HotelPreferenceInput)
-
-
-class DemoCacheResponse(BaseModel):
-    """Instant hackathon-safe payload: all three committed caches in one shot.
-
-    Read-only sibling to /extract + /itinerary — never runs live work or SSE.
-    """
-    source: str = "cache"
-    places: list[dict]
-    hotel_base: dict
-    itinerary: dict
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +99,6 @@ def health() -> dict:
 # ---------------------------------------------------------------------------
 # /demo-cache — instant, read-only replay of all three committed caches
 # ---------------------------------------------------------------------------
-
-# Any of these from a cache file means "missing or invalid" → clean 503 (never a 500 leak).
-# OSError covers missing/unreadable files (FileNotFoundError + permission errors); TypeError
-# covers valid-JSON-but-wrong-shape (e.g. places.json is top-level `[]`/`null`, or
-# `"places": null`) where _load_cached_places does data["places"] + iterates.
-_CACHE_LOAD_ERRORS = (OSError, json.JSONDecodeError, KeyError, TypeError, ValidationError)
-
 
 @app.get("/demo-cache", response_model=DemoCacheResponse)
 def demo_cache() -> DemoCacheResponse:
@@ -239,172 +198,30 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
 
 
 def _sse_event(payload: dict) -> str:
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return _streaming_sse_event(payload)
 
 
-async def _itinerary_stream(
-    places: list[ExtractedPlace],
-    prefs: UserPreferences,
-    hotel_base: Optional[dict] = None,
-):
-    """Yield SSE events: start → heartbeats → result → [DONE]."""
-    if not places:
-        yield _sse_event({"type": "error", "message": "no places provided and cache empty"})
-        yield "data: [DONE]\n\n"
-        return
-
-    # Cap places to match planner's enricher budget (Phase 2 learning).
-    capped = (
-        _top_n_by_confidence(places, _MAX_PLACES)
-        if len(places) > _MAX_PLACES else places
+def _itinerary_stream(places, prefs, hotel_base=None):
+    # SSE terminator remains "data: [DONE]\n\n".
+    return _streaming_itinerary_stream(
+        places,
+        prefs,
+        hotel_base,
+        run_planner_fn=run_planner,
+        load_cached_itinerary_fn=_load_cached_itinerary,
+        heartbeat_interval=_HEARTBEAT_INTERVAL,
     )
-    planner_places = [PlannerPlace.model_validate(p.model_dump()) for p in capped]
-
-    yield _sse_event({
-        "type": "start",
-        "n_places_in": len(places),
-        "n_places_used": len(capped),
-        "destination": planner_places[0].city_or_region_guess,
-    })
-
-    t0 = time.monotonic()
-    progress: asyncio.Queue = asyncio.Queue()
-    planner_task = asyncio.create_task(
-        asyncio.wait_for(
-            run_planner(planner_places, prefs, hotel_base=hotel_base, progress=progress),
-            timeout=_GLOBAL_TIMEOUT,
-        )
-    )
-
-    # Wrap heartbeat loop + result extraction in try/finally so a client disconnect
-    # (generator cancellation) doesn't leak the planner task and burn OpenAI tokens.
-    try:
-        # Heartbeats keep the connection warm during the ~170s planner wait;
-        # stage events drained from `progress` surface phase changes (research/narrator).
-        while not planner_task.done():
-            while not progress.empty():
-                yield _sse_event(progress.get_nowait())
-            try:
-                await asyncio.wait_for(asyncio.shield(planner_task), timeout=_HEARTBEAT_INTERVAL)
-            except asyncio.TimeoutError:
-                yield _sse_event({
-                    "type": "heartbeat",
-                    "elapsed_s": round(time.monotonic() - t0, 1),
-                })
-            except Exception:
-                # Planner errored; loop exits via done() check next iter.
-                break
-
-        # Flush any stage events emitted just before the planner finished.
-        while not progress.empty():
-            yield _sse_event(progress.get_nowait())
-
-        try:
-            result = planner_task.result()
-        except Exception as exc:
-            logger.error("/itinerary planner failed (%s) — trying cached itinerary", exc)
-            cached = _load_cached_itinerary()
-            if cached is None:
-                yield _sse_event({"type": "error", "message": f"planner failed: {exc}"})
-                yield "data: [DONE]\n\n"
-                return
-            result = cached
-
-        elapsed = round(time.monotonic() - t0, 1)
-        logger.info("/itinerary done in %.1fs (source=%s)", elapsed, result.source)
-
-        # CLAUDE.md SSE contract: result first, then [DONE].
-        yield _sse_event({"type": "result", "content": result.model_dump_json(), "elapsed_s": elapsed})
-        yield "data: [DONE]\n\n"
-    finally:
-        # Client disconnect or any unwind path — cancel pending planner work.
-        if not planner_task.done():
-            planner_task.cancel()
 
 
 def _cap_hotel_base_places(places: list[dict]) -> list[dict]:
-    if len(places) <= _MAX_PLACES:
-        return places
-    return sorted(
-        places,
-        key=lambda place: -(
-            place.get("confidence")
-            if isinstance(place.get("confidence"), (int, float)) else 0
-        ),
-    )[:_MAX_PLACES]
+    return _streaming_cap_hotel_base_places(places)
 
 
-async def _hotel_base_stream(req: HotelBaseRequest):
-    capped_places = _cap_hotel_base_places(req.places)
-    destination = capped_places[0].get("city_or_region_guess") or "destination"
-    t0 = time.monotonic()
-    yield hotel_base_sse_event({
-        "type": "start",
-        "destination": destination,
-        "place_count": len(capped_places),
-        "n_places_in": len(req.places),
-        "n_places_used": len(capped_places),
-    })
-    yield hotel_base_sse_event({
-        "type": "stage",
-        "stage": "scoring_base_areas",
-        "msg": "Testing hotel base areas against extracted places.",
-    })
-    hotel_base_task = asyncio.create_task(
-        run_hotel_base_optimizer(
-            places=capped_places,
-            preferences=req.preferences.model_dump(mode="json"),
-            hotel_preferences=req.hotel_preferences,
-        )
+def _hotel_base_stream(req: HotelBaseRequest):
+    return _streaming_hotel_base_stream(
+        req,
+        run_hotel_base_optimizer_fn=run_hotel_base_optimizer,
     )
-    try:
-        while not hotel_base_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(hotel_base_task), timeout=_HEARTBEAT_INTERVAL)
-            except asyncio.TimeoutError:
-                yield hotel_base_sse_event({
-                    "type": "heartbeat",
-                    "elapsed_s": round(time.monotonic() - t0, 1),
-                })
-            except Exception:
-                break
-
-        try:
-            result: HotelBaseResult = hotel_base_task.result()
-        except Exception as exc:  # noqa: BLE001 - SSE errors must terminate cleanly
-            yield hotel_base_sse_event({"type": "error", "message": f"hotel-base failed: {exc}"})
-            yield "data: [DONE]\n\n"
-            return
-
-        for candidate in result.base_areas:
-            yield hotel_base_sse_event({
-                "type": "base_candidate",
-                "candidate": candidate.model_dump(mode="json"),
-            })
-        yield hotel_base_sse_event({
-            "type": "stage",
-            "stage": "finding_hotels",
-            "msg": f"Finding hotel candidates in {result.selected_base.name}.",
-        })
-        for candidate in result.hotel_candidates:
-            yield hotel_base_sse_event({
-                "type": "hotel_candidate",
-                "candidate": candidate.model_dump(mode="json"),
-            })
-        yield hotel_base_sse_event({
-            "type": "stage",
-            "stage": "selecting_base",
-            "msg": f"Selected {result.selected_base.name}.",
-        })
-        yield hotel_base_sse_event({
-            "type": "result",
-            "content": result.model_dump_json(),
-            "elapsed_s": round(time.monotonic() - t0, 1),
-        })
-        yield "data: [DONE]\n\n"
-    finally:
-        if not hotel_base_task.done():
-            hotel_base_task.cancel()
 
 
 @app.post("/itinerary")
