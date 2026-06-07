@@ -1,5 +1,7 @@
 # AP2 Human In The Loop Implementation Plan
 
+> Status: historical implementation plan. The AP2 demo mandate flow is now implemented in `backend/payments/` with compatibility exports through `backend/spike_agentic_payments.py`, and the frontend booking UI exists in `frontend/components/trip/BookingFlowPanel.tsx` plus `frontend/lib/trip/hotel-booking.ts`. Treat the task steps below as execution history, not current repo state.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven development or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a minimal demo-grade AP2 signed human confirmation layer before the existing `/hotel-booking` x402 settlement path.
@@ -10,7 +12,7 @@
 
 ---
 
-## Current State
+## Original Current State At Plan Time
 
 The backend already proves the x402 half of the story:
 
@@ -19,7 +21,7 @@ The backend already proves the x402 half of the story:
 - `X402_MODE=simulation` remains the default offline test path.
 - `X402_MODE=real` performs real Base Sepolia x402 settlement and returns `payment.status="settled"`.
 - `backend/data/planner_output.json` is the hotel booking tool payload for the selected hotel.
-- The frontend currently has no AP2/hotel-booking UI. It has hotel-base optimization panels and typed backend contracts in `frontend/lib/trip/backend-types.ts`.
+- At the time this plan was written, the frontend had no AP2/hotel-booking UI. The current repo now has that UI in `frontend/components/trip/BookingFlowPanel.tsx` and payment helpers in `frontend/lib/trip/hotel-booking.ts`.
 
 The missing piece is AP2-style cryptographic authorization:
 
@@ -137,7 +139,7 @@ After success, the panel should show:
 
 ### New Environment Variables
 
-Add these to `AGENTICPAYMENTS.md` and mention them in `.env` docs without committing secret values:
+Add these to `docs/reference/agentic-payments.md` and mention them in `.env` docs without committing secret values:
 
 ```bash
 AP2_MODE=disabled
@@ -422,7 +424,7 @@ Backend:
   - Add fail-closed tests for missing/tampered/expired/mismatched mandate.
   - Add "AP2 failure does not run x402" regression test.
 
-- Modify `AGENTICPAYMENTS.md`
+- Modify `docs/reference/agentic-payments.md`
   - Add AP2 signed human-in-loop section and env vars.
   - Clarify demo AP2 is not production AP2 compliance.
 
@@ -1018,8 +1020,8 @@ git commit -m "feat(frontend): add AP2 hotel confirmation panel"
 
 **Files:**
 
-- Modify: `AGENTICPAYMENTS.md`
-- Modify: `AP2.md`
+- Modify: `docs/reference/agentic-payments.md`
+- Modify: this AP2 plan file
 
 - [ ] **Step 1: Update docs**
 
@@ -1111,7 +1113,7 @@ This command assumes `ORCHESTRATOR_PRIVATE_KEY`, `ORCHESTRATOR_WALLET_ADDRESS`, 
 - [ ] **Step 6: Commit docs**
 
 ```bash
-git add AGENTICPAYMENTS.md AP2.md
+git add docs/reference/agentic-payments.md docs/superpowers/plans/2026-06-06-ap2-human-in-the-loop.md
 git commit -m "docs: plan AP2 human-in-the-loop hotel booking"
 ```
 

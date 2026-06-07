@@ -257,7 +257,7 @@ Backend:
 - `backend/tests/test_agentic_hotel_payments.py`
   - Add AP2 signing, verification, and fail-closed tests.
 
-- `AGENTICPAYMENTS.md`
+- `docs/reference/agentic-payments.md`
   - Document demo AP2 env vars and non-compliance caveat.
   - Document the 180-second mandate TTL.
 

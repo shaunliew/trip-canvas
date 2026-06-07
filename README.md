@@ -171,6 +171,20 @@ NEXT_PUBLIC_MAPBOX_TOKEN=...
 NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```
 
+## Docs
+
+Current source-of-truth docs stay at the repo root:
+
+- `README.md` - product overview, local run commands, and verification.
+- `AGENTS.md` - agent-facing product and implementation rules.
+- `CLAUDE.md` - detailed backend contracts, package layout, SSE contract, env vars, and demo guardrails.
+
+Supporting docs live under `docs/`:
+
+- `docs/README.md` - docs map and current verified repo shape.
+- `docs/reference/agentic-payments.md` - AP2/x402 payment reference.
+- `docs/superpowers/` - historical specs and implementation plans.
+
 ## Demo Script
 
 1. Start backend on `8000` and frontend on `3000`.

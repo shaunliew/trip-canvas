@@ -2,9 +2,9 @@
 
 ## What we are building
 
-AI-native travel planner. User pastes 3-4 Instagram Reel URLs + travel dates + budget + origin city + free-text preferences. Backend extracts real places, researches them live, fetches weather, recommends 3 hotels (with one best pick), assembles a day-by-day itinerary, and runs an **agentic payment** (AP2 + x402) over **mock** bookings. Frontend renders a **Mapbox 3D map** (tilted/3D globe → zoom-in city map) → streaming AI agent panel.
+AI-native travel planner. User pastes 3-4 Instagram Reel URLs + travel dates + budget + origin city + free-text preferences. Backend extracts real places, researches them live, fetches weather, recommends 3 hotels (with one best pick), assembles a day-by-day itinerary, and runs an **agentic payment** (AP2 + x402) over **mock** bookings. Frontend renders a **Mapbox 3D map** (tilted/3D globe → zoom-in city map) with a streaming AI agent panel and human-approved hotel-payment flow.
 
-> **Pivot note (2026-06-06):** (1) Frontend is a **Mapbox 3D map**, NOT a flipbook/pop-up book. (2) Payments moved from Duffel to an **AP2 + x402 agentic-payment seam** — the *payment* is the headline ("the agent really pays"), the *booking/fulfillment stays mock* (`is_mock=True`). (3) Itinerary hotels are now **3 recommendations + 1 best pick**. Current code round is **backend-only**; the 3D-map frontend revamp is a separate next round.
+> **Pivot note (2026-06-06, current as of 2026-06-07):** (1) Frontend is a **Mapbox 3D map**, NOT a flipbook/pop-up book. (2) Payments moved from Duffel to an **AP2 + x402 agentic-payment seam** — the *payment* is the headline ("the agent really pays"), the *booking/fulfillment stays mock* (`is_mock=True`). (3) Itinerary hotels are now **3 recommendations + 1 best pick**. The current repo already includes the Mapbox generation shell and AP2/x402 hotel-payment UI baseline; future work should extend this flow incrementally, not replace it.
 
 Hackathon: Sea × OpenAI Codex Hackathon, 6 June 2026, Singapore.
 Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
@@ -15,11 +15,11 @@ Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
 
 | Person | Owns |
 |--------|------|
-| Shaun  | **Frontend 3D Mapbox revamp** + **backend agent logic**: extract (`spike_e2e.py`), planner/narrator (`spike_planner.py`), weather (`spike_weather.py`), hotel-base 3-rec (`spike_hotel_base.py`), FastAPI SSE (`main.py`), demo reliability |
-| Zhi Hao | **Agentic payment**: AP2 (Intent/Cart mandates) + x402 (HTTP-402 settlement) wired into the `PaymentProvider` seam in `spike_booking.py` (replaces the default `MockSettlementProvider` with a real AP2-mandate → x402-facilitator client) |
+| Shaun  | **Frontend 3D Mapbox surface** + **backend agent logic**: extract (`spike_e2e.py`), planner/narrator (`backend/planner/runner.py`, via `spike_planner.py` facade), weather (`spike_weather.py`), hotel-base 3-rec (`spike_hotel_base.py`), FastAPI SSE (`main.py`), demo reliability |
+| Zhi Hao | **Agentic payment**: AP2 (Intent/Cart mandates) + x402 (HTTP-402 settlement) for the explicit hotel-payment endpoints in `backend/payments/`; real provider work remains owned here. The older itinerary booking overlay still has the `PaymentProvider` seam in `spike_booking.py`. |
 | Cody  | Pydantic schemas + agent code (weather / booking / hotel-base), collab w/ Shaun on planner integration |
 
-> Round split: **this round = backend + docs (Shaun's agent logic + hotel 3-rec + the payment seam stub)**. **Next round = frontend 3D-map revamp (Shaun)** and **real AP2/x402 settlement (Zhi Hao)**.
+> Current baseline: backend APIs, planner/payment package layout, Mapbox frontend, and AP2/x402 hotel-payment UI are present. Real AP2/x402 provider work remains Zhi Hao-owned; default local behavior stays simulation/mock-safe.
 
 ---
 
@@ -34,9 +34,9 @@ Code freeze: 17:00 SGT. One tight demo loop beats three half-built features.
 | LLM reasoning | OpenAI Agents SDK `Agent(model="gpt-5.5-2026-04-23")` + `gpt-4o` typed fallback + `WebSearchTool` |
 | Place extraction | `_extract_for_reel` agent in `spike_e2e.py`: `output_type=ExtractionResult`, `WebSearchTool` for geocoding |
 | Hotel recommendation | `hotel_base_agent` in `spike_hotel_base.py`: **3 hotel candidates + 1 best pick** (`selected_hotel_id`), all in the selected base area |
-| Itinerary planning | `enricher` + `narrator_agent` in `spike_planner.py` (carries `hotel_options` = the 3 recs) |
+| Itinerary planning | `enricher` + `narrator_agent` in `backend/planner/runner.py`, re-exported by `spike_planner.py` (carries `hotel_options` = the 3 recs) |
 | Weather | **Open-Meteo** HTTP (free, no API key, 10k calls/day) wrapped as `function_tool` |
-| **Agentic payment** | **AP2** (Agent Payments Protocol — signed Intent/Cart mandates = authorization) **+ x402** (Coinbase HTTP-402 → `X-PAYMENT` header → facilitator settles USDC = settlement). Modeled as a `PaymentProvider` seam; default `MockSettlementProvider` this round, real client owned by Zhi Hao |
+| **Agentic payment** | **AP2** (Agent Payments Protocol — signed Intent/Cart mandates = authorization) **+ x402** (Coinbase HTTP-402 → `X-PAYMENT` header → facilitator settles USDC = settlement). Explicit hotel-booking flow lives in `backend/payments/`; itinerary booking overlay still uses the `PaymentProvider` seam in `spike_booking.py` |
 | Booking — flights | **Skyscanner deep-link composer** + `TC-MOCK-{sha1[:8]}` id (mock fulfillment). *Duffel sandbox = deprecated optional fallback, only if `DUFFEL_TEST_TOKEN` set* |
 | Booking — hotels | **Booking.com search-URL composer** (no auth) + `TC-MOCK-{sha1[:8]}` id |
 | Booking — attractions | **Klook search-URL composer** (no auth) + `TC-MOCK-{sha1[:8]}` id |
@@ -79,12 +79,24 @@ DEMO_REEL_URLS        # comma-separated reel URLs for spike scripts (e.g. url1,u
 DEMO_REEL_URL         # single-URL fallback — DEMO_REEL_URLS takes precedence
 BOOKING_AID           # optional Booking.com affiliate id, may be empty for hackathon
 
-# --- Agentic payment (AP2 + x402) — Zhi Hao's domain ---
-USE_MOCK_PAYMENT      # "true" (default) → MockSettlementProvider, no network. "false" → real provider (next round)
-X402_FACILITATOR_URL  # x402 facilitator endpoint for verify+settle (e.g. Coinbase CDP). Unused while mock
-PAYMENT_NETWORK       # settlement chain e.g. "base-sepolia" (testnet) | "base". "mock" when USE_MOCK_PAYMENT
-AP2_MANDATE_SIGNING_KEY  # key/keyref for signing AP2 Intent/Cart mandates. Placeholder until real client lands
-X402_PAYER_ADDRESS    # agent wallet address used by x402 (testnet USDC). Placeholder until real client lands
+# --- Agentic hotel payment endpoint (AP2 + x402) ---
+AP2_MODE              # "disabled" (default) | "demo_signed"
+AP2_DEMO_SIGNING_SECRET  # required only when AP2_MODE=demo_signed
+AP2_DEMO_ISSUER      # default "tripcanvas-demo-trusted-surface"
+AP2_DEMO_AUDIENCE    # default "tripcanvas-hotel-booking-agent"
+AP2_MANDATE_TTL_SECONDS  # default 180
+X402_MODE             # "simulation" (default) | "real"
+X402_NETWORK          # default "eip155:84532"
+X402_FACILITATOR_URL  # real-mode facilitator endpoint
+X402_HOTEL_BOOKING_PRICE_USD  # default "0.01"
+HOTEL_BOOKING_MODE    # unset or "mock"; any other value is rejected
+ORCHESTRATOR_PRIVATE_KEY  # required only in X402_MODE=real
+ORCHESTRATOR_WALLET_ADDRESS # required only in X402_MODE=real
+HOTEL_AGENT_PAY_TO    # required only in X402_MODE=real
+
+# --- Itinerary booking overlay seam ---
+USE_MOCK_PAYMENT      # "true" (default) → MockSettlementProvider for itinerary booking items
+PAYMENT_NETWORK       # settlement label for MockSettlementProvider, default "mock"
 
 # --- Deprecated (optional fallback only) ---
 DUFFEL_TEST_TOKEN     # DEPRECATED. If set, MUST contain "_test_" (guard still enforced). Absent → Duffel path skipped, no startup abort
@@ -129,6 +141,7 @@ tripcanvas/
 │   ├── spike_weather.py            # weather_agent + fetch_weather (Open-Meteo)
 │   ├── spike_hotel_base.py         # hotel_base_agent: 3 hotel candidates + best pick (selected_hotel_id)
 │   ├── spike_booking.py            # booking_agent + deep-link composers + PaymentProvider seam (AP2/x402; Duffel deprecated)
+│   ├── lib/                        # empty package markers only; no implementation modules live here
 │   └── data/                       # one JSON per purpose — no duplicate result files
 │       ├── places.json             # COMMITTED cache (extract fallback)
 │       ├── hotel_base_output.json  # COMMITTED cache (3 hotel candidates + best pick)
@@ -146,7 +159,7 @@ tripcanvas/
 
 Legacy imports through `backend.spike_planner` and `backend.spike_agentic_payments` remain supported while the implementation lives in `backend/planner/` and `backend/payments/`. Keep public endpoint contracts, response schemas, and the SSE `result` then `[DONE]` termination contract stable when working across these facades.
 
-Earlier docs described `backend/lib/agents/{triage,research,hotels,transport,narrator}.py` and `backend/lib/extract/{apify_mcp,place_extractor,pipeline}.py`. THOSE FILES DO NOT EXIST. Use the organized package layout above, and do not reintroduce the old `backend/lib` placeholder.
+Earlier docs described `backend/lib/agents/{triage,research,hotels,transport,narrator}.py` and `backend/lib/extract/{apify_mcp,place_extractor,pipeline}.py`. Those implementation modules do not exist; `backend/lib` currently contains only empty package markers. Use the organized package layout above.
 
 ---
 
@@ -308,9 +321,14 @@ Surfacing into the itinerary: `_run_planner_inner` maps the 3 candidates into `I
 
 ---
 
-## Booking + Agentic Payment (`spike_booking.py`)
+## Booking Overlay + Agentic Payment
 
-Bookings are **mock fulfillment** (deep links). The new headline is the **agentic payment**: AP2 authorization + x402 settlement, modeled behind a `PaymentProvider` seam so Zhi Hao can drop in a real client without touching the booking flow.
+There are two payment-adjacent paths:
+
+- `backend/spike_booking.py` builds itinerary booking overlay items using deep links and a `PaymentProvider` seam. This path keeps booking fulfillment mock and defaults to `MockSettlementProvider`.
+- `backend/payments/` implements the explicit AP2/x402 hotel-payment endpoints: `POST /ap2/hotel-booking-mandate` and `POST /hotel-booking`.
+
+Bookings are **mock fulfillment** (deep links or mock hotel receipt). The headline is the **agentic payment**: AP2 authorization + x402 settlement, while hotel reservation fulfillment remains mock-only.
 
 ```python
 class PaymentSettlement(BaseModel):              # NEW — the "real payment" record (separate from booking)
@@ -343,7 +361,7 @@ class BookingResult(BaseModel):
     is_mock_settlement: bool = True              # NEW
 ```
 
-The `PaymentProvider` seam:
+The itinerary-overlay `PaymentProvider` seam:
 
 ```python
 class PaymentProvider(ABC):
@@ -440,10 +458,10 @@ Frontend `BackendExtractedPlace` mirrors this (snake_case) and does not consume 
 - Broad rewrites beyond the current compatibility-facade layout; keep API/SSE contracts stable
 - Real booking checkout / real fulfillment / charging real money (booking is ALWAYS mock)
 - Production Duffel tokens or reviving Duffel as primary (it is a deprecated optional fallback)
-- Mainnet USDC / real-money x402 settlement this round (testnet only, and that's Zhi Hao's next round)
+- Mainnet USDC / real-money x402 settlement for the demo path; keep real-mode experiments tiny, explicit, and testnet-only
 - MCP for payment / Open-Meteo (function tools + the PaymentProvider seam are simpler)
 - Reverting to pop-up book / flipbook / react-pageflip / Google Maps (frontend has pivoted to a Mapbox 3D map)
-- The 3D-map frontend revamp THIS round (backend-only this round; only `backend-types.ts` types are touched)
+- Rebuilding the existing Mapbox generation shell; extend it incrementally
 - requirements.txt (use pyproject.toml via uv)
 
 ---

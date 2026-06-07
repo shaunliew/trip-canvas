@@ -1,5 +1,7 @@
 # Agentic Payments For TripCanvas
 
+> Current reference as of 2026-06-07. The implementation lives in `backend/payments/`, with compatibility exports through `backend/spike_agentic_payments.py`. The itinerary booking overlay still has the older `PaymentProvider` seam in `backend/spike_booking.py`, but the explicit hotel-booking endpoint flow is `POST /ap2/hotel-booking-mandate` then `POST /hotel-booking`.
+
 ## Decision
 
 TripCanvas will use **AP2-inspired authorization** plus **x402 machine payment** for the hotel booking demo.
@@ -11,7 +13,7 @@ The product story is:
 3. The hotel booking agent requires payment before issuing the booking.
 4. The orchestrator pays the hotel booking agent through x402 on a testnet or sandbox network.
 5. The hotel booking agent returns a mock hotel reservation receipt.
-6. The itinerary is planned from the booked hotel base.
+6. The existing itinerary remains grounded on the selected hotel base, and the UI shows the AP2/x402 booking receipt after user approval.
 
 This is intentionally not a production hotel checkout. The goal is to show an end-to-end AI-native flow where agents can reason, request authority, pay another agent, and return a booking artifact.
 
@@ -39,7 +41,7 @@ ACP is not in scope for this version. ACP is more relevant when TripCanvas needs
 - No real production hotel booking.
 - No production card payment.
 - No ACP implementation.
-- No full AP2 compliance claim for V1 unless mandates are cryptographically signed and verified.
+- No full AP2 compliance claim. TripCanvas signs and verifies demo mandates, but this is still AP2-style demo signing rather than a production AP2 credential-provider integration.
 - No hidden chain-of-thought display. The UI shows user-facing rationale, scores, evidence, and tool/status events.
 - No dependency on a live hotel supplier API for the demo path.
 
@@ -51,7 +53,7 @@ Sets travel dates, Reel URLs, hotel preferences, and booking constraints. The us
 
 ### TripCanvas Orchestrator Agent
 
-Owns the trip run. It extracts places, asks the hotel-base optimizer for candidates, creates the AP2-shaped booking mandate, pays the hotel booking agent through x402, and forwards the booked base into itinerary planning.
+Owns the trip run. It extracts places, asks the hotel-base optimizer for candidates, plans the itinerary from the selected hotel base, creates the AP2-shaped booking mandate after user approval, pays the hotel booking agent through x402, and returns the mock receipt to the UI.
 
 ### Hotel Decision Agent
 
@@ -97,7 +99,6 @@ Prepare two wallets:
 Suggested environment variables:
 
 ```bash
-X402_ENABLED=true
 X402_MODE=real
 X402_NETWORK=eip155:84532
 X402_FACILITATOR_URL=https://x402.org/facilitator
@@ -211,7 +212,7 @@ demo mandate.
 
 ## Backend Flow
 
-The booking step should run after hotel-base optimization and before final itinerary planning.
+The current frontend runs booking after itinerary generation, once the user can inspect and approve the selected hotel.
 
 ```text
 POST /extract
@@ -220,8 +221,11 @@ POST /extract
 POST /hotel-base
   -> free hotel decision trace and selected hotel candidate
 
+POST /itinerary
+  -> itinerary uses selected hotel base
+
 User approves AP2-shaped mandate
-  -> mandate is attached to the trip run
+  -> POST /ap2/hotel-booking-mandate signs the final hotel checkout terms
 
 POST /hotel-booking
   -> orchestrator calls hotel booking agent
@@ -229,9 +233,6 @@ POST /hotel-booking
   -> orchestrator pays with x402
   -> orchestrator retries with payment proof
   -> hotel booking agent returns mock booking receipt
-
-POST /itinerary
-  -> itinerary uses selected and booked hotel base
 ```
 
 The `/hotel-base` step should remain free. The x402 gate should protect only the booking action, not the decision preview. This lets the user see why the hotel is being chosen before any agent payment happens.
@@ -305,8 +306,8 @@ Recommended timeline:
 5. **Mock booking confirmed**
    - Show `TC-MOCK-...`, hotel, dates, guests, and mock-only disclaimer.
 
-6. **Itinerary updated**
-   - "Planner is routing all days from the booked hotel base."
+6. **Receipt ready**
+   - "The itinerary remains routed from the selected hotel base; the hotel receipt is demo-safe and mock-only."
 
 ## User-Facing Hotel Reasoning
 
@@ -367,9 +368,8 @@ Avoid:
    - Add orchestrator buyer behavior to sign, verify, settle, and retry.
    - Keep simulation fallback explicitly labeled and unavailable in `X402_MODE=real`.
 
-4. **Orchestrator SSE**
-   - Add booking stage events after `/hotel-base` and before `/itinerary`.
-   - Stream mandate, payment, and receipt events.
+4. **Orchestrator/UI events**
+   - Show mandate, payment, and receipt events in the frontend booking flow after the itinerary is visible.
 
 5. **Frontend audit trail**
    - Add the AP2/x402 booking timeline to the agent panel.
@@ -390,7 +390,7 @@ Avoid:
 - The booking action requires payment, not the free recommendation step.
 - The orchestrator pays the hotel agent wallet through x402 or a clearly labeled x402 simulation.
 - The UI shows an audit trail from mandate to payment to mock booking receipt.
-- The final itinerary uses the booked hotel as the route hub.
+- The final itinerary uses the selected hotel base as the route hub, and the approved booking receipt matches that selected hotel.
 - The demo never implies a real hotel reservation was created.
 
 ## References

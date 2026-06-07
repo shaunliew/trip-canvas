@@ -17,26 +17,30 @@ TripCanvas is an AI-native travel planner. The main demo flow stays aligned with
    recommendation panel.
 
 **Pivot (2026-06-06) — `CLAUDE.md` is now fully aligned with these and is the
-source of truth:**
+source of truth. Current repo status was refreshed on 2026-06-07:**
 
 - **Surface:** a **Mapbox 3D / tilted map** is the primary UI/UX, NOT a pop-up
   book / flipbook / `react-pageflip` / Google Maps. These are permanently
   dropped — do not reintroduce them.
 - **Payments:** Duffel is deprecated. The agent performs a **real agentic
   payment** via **AP2** (signed Intent/Cart mandates) **+ x402** (HTTP-402 →
-  `X-PAYMENT` → facilitator settles USDC), modeled behind a `PaymentProvider`
-  seam in `spike_booking.py`. The **booking/fulfillment stays mock**
-  (`is_mock=True`); the payment is the headline. **Ownership:** Zhi Hao owns the
-  real AP2/x402 provider; the default `MockSettlementProvider` ships this round.
+  `X-PAYMENT` → facilitator settles USDC). The explicit hotel-payment endpoint
+  implementation lives in `backend/payments/`, with compatibility exports from
+  `backend/spike_agentic_payments.py`; the itinerary booking overlay still has
+  the older `PaymentProvider` seam in `spike_booking.py`. The
+  **booking/fulfillment stays mock** (`is_mock=True`); the payment is the
+  headline. **Ownership:** Zhi Hao owns real AP2/x402 provider work; local demo
+  defaults remain simulation/mock-safe.
 - **Hotels:** the itinerary shows **3 hotel recommendations + 1 best pick**
   (`ItineraryOutput.hotel_options`, one with `is_best=true`; `recommended_hotel`
   is the best pick).
-- **Round split:** the current code round is **backend-only**. The **3D-map
-  frontend revamp is a separate next round** (owned by Shaun). Do not start the
-  frontend rebuild until that round.
+- **Current baseline:** the repo now includes the Mapbox generation shell,
+  extracted-place map feedback, itinerary panels, and AP2/x402 hotel-payment UI.
+  Future frontend work should be incremental and should not replace the main
+  Mapbox-first flow unless the user explicitly changes direction.
 
 Keep `CLAUDE.md` as the source of truth for the backend pipeline, data flow, SSE
-contract, cache fallback, demo guardrails, payment seam, and agent orchestration.
+contract, cache fallback, demo guardrails, payment services, and agent orchestration.
 
 ## Hackathon Positioning
 
@@ -59,7 +63,7 @@ agent experience:
 Read these before making frontend changes:
 
 - `CLAUDE.md` for backend contracts and the main demo flow.
-- `FRONTEND_CONTEXT.md` for the Mapbox experience direction.
+- `README.md` for the implemented demo surface and verification commands.
 - `frontend/package.json` for the actual installed frontend stack.
 - `frontend/app/` structure.
 - `frontend/components/` and `frontend/lib/` structure.
@@ -67,9 +71,9 @@ Read these before making frontend changes:
 If docs conflict, prefer this order for frontend decisions:
 
 1. This `AGENTS.md`
-2. `FRONTEND_CONTEXT.md`
-3. Existing frontend code
-4. `CLAUDE.md` backend/data contracts
+2. `CLAUDE.md` backend/data contracts
+3. `README.md`
+4. Existing frontend code
 
 ## Frontend Architecture
 
