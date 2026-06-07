@@ -1,7 +1,7 @@
 """Tests for /itinerary stage SSE events (IMPROVEMENTS.md §3.1).
 
-Run from the backend/ directory so the flat module imports resolve:
-    cd backend && uv run pytest tests/test_itinerary_stage_events.py
+Run from repo root:
+    uv run pytest backend/tests/test_itinerary_stage_events.py
 
 The behaviour under test:
   - spike_planner._emit_stage puts a CLAUDE.md-shaped stage event onto an
@@ -13,17 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import sys
 import unittest
 
-# Put backend/ on the path so the flat module imports resolve under pytest,
-# which otherwise only adds the test file's own directory.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import main
-from spike_e2e import PlaceResult as ExtractedPlace
-from spike_planner import (
+from backend import main
+from backend.spike_e2e import PlaceResult as ExtractedPlace
+from backend.spike_planner import (
     ItineraryDay,
     ItineraryOutput,
     UserPreferences,

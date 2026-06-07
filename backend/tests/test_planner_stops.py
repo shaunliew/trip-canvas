@@ -11,15 +11,11 @@ Run from repo root:
 from __future__ import annotations
 
 import json
-import os
-import sys
 import unittest
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from spike_planner import DayStop, ItineraryDay, ItineraryOutput  # noqa: E402
+from backend.spike_planner import DayStop, ItineraryDay, ItineraryOutput
 
 _CACHE = Path(__file__).resolve().parent.parent / "data" / "planner_output.json"
 

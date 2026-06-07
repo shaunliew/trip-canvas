@@ -1,9 +1,6 @@
-import sys
 import unittest
 
-sys.path.insert(0, "backend")
-
-from backend.spike_planner import (  # noqa: E402
+from backend.spike_planner import (
     EnrichedContext,
     PlaceInfo,
     PlaceResult,

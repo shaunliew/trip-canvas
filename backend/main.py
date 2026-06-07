@@ -21,8 +21,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import sys
 import time
 from typing import Optional
 
@@ -30,15 +28,12 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv())
 
-# Make sibling spike modules importable when running via `uvicorn backend.main:app`.
-sys.path.insert(0, os.path.dirname(__file__))
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from spike_agentic_payments import (
+from backend.spike_agentic_payments import (
     AP2HotelBookingMandateRequest,
     AP2MandateResponse,
     AgenticHotelPaymentService,
@@ -46,8 +41,8 @@ from spike_agentic_payments import (
     HotelBookingResponse,
     create_ap2_hotel_booking_mandate,
 )
-from spike_e2e import PlaceResult as ExtractedPlace
-from spike_e2e_planner import (
+from backend.spike_e2e import PlaceResult as ExtractedPlace
+from backend.spike_e2e_planner import (
     _EXTRACTION_TIMEOUT,
     _MAX_PLACES,
     _load_cached_itinerary,
@@ -56,13 +51,13 @@ from spike_e2e_planner import (
     _write_cached_places,
     run_extraction,
 )
-from spike_planner import (
+from backend.spike_planner import (
     PlaceResult as PlannerPlace,
     UserPreferences,
     _GLOBAL_TIMEOUT,
     run_planner,
 )
-from spike_hotel_base import (
+from backend.spike_hotel_base import (
     HotelBaseResult,
     HotelPreferenceInput,
     load_cached_hotel_base_result,

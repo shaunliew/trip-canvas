@@ -9,14 +9,10 @@ Run from the backend/ directory:
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import spike_booking  # noqa: E402
-from spike_booking import (  # noqa: E402
+import backend.spike_booking as spike_booking
+from backend.spike_booking import (
     BookingItem,
     BookingResult,
     MockSettlementProvider,

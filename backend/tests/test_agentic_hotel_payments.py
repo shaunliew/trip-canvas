@@ -176,6 +176,17 @@ def _base64url_json(payload):
 
 
 class AgenticHotelPaymentTests(unittest.TestCase):
+    def setUp(self):
+        self._env_patch = patch.dict(
+            os.environ,
+            {
+                "X402_MODE": "simulation",
+                "X402_NETWORK": "base-sepolia",
+            },
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+
     def test_planner_output_loads_and_resolves_best_hotel_option(self):
         hotel_tool = load_hotel_tool_dict()
 

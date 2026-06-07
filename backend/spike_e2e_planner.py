@@ -35,13 +35,13 @@ load_dotenv(find_dotenv())
 
 from agents.mcp import MCPServerStreamableHttp
 
-from spike_e2e import (
+from backend.spike_e2e import (
     PlaceResult as ExtractedPlace,
     ReelData,
     _extract_for_reel,
     _scrape_reel,
 )
-from spike_planner import (
+from backend.spike_planner import (
     ItineraryOutput,
     PlaceResult as PlannerPlace,
     UserPreferences,

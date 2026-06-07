@@ -12,16 +12,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import main  # noqa: E402
-from spike_e2e import PlaceResult as ExtractedPlace  # noqa: E402
-from spike_e2e_planner import _load_cached_itinerary  # noqa: E402
-from spike_hotel_base import load_cached_hotel_base_result  # noqa: E402
-from spike_planner import ItineraryOutput, UserPreferences  # noqa: E402
+from backend import main
+from backend.spike_e2e import PlaceResult as ExtractedPlace
+from backend.spike_e2e_planner import _load_cached_itinerary
+from backend.spike_hotel_base import load_cached_hotel_base_result
+from backend.spike_planner import ItineraryOutput, UserPreferences
 
 _DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 

@@ -3,23 +3,19 @@
 /demo-cache is the instant hackathon-safe path: it replays the three committed
 caches (places.json, hotel_base_output.json, planner_output.json) in ONE payload
 with zero live work. These tests call the handler directly (no TestClient/httpx
-dependency) — mirroring tests/test_cache_contract.py, which inserts the backend
-dir onto sys.path and imports `main`.
+dependency) — mirroring tests/test_cache_contract.py.
 
-Run from the backend/ directory:
-    cd backend && uv run pytest tests/test_demo_cache_endpoint.py
+Run from repo root:
+    uv run pytest backend/tests/test_demo_cache_endpoint.py
 """
 from __future__ import annotations
 
 import json
-import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fastapi import HTTPException
 
-import main  # noqa: E402
-from fastapi import HTTPException  # noqa: E402
+from backend import main
 
 
 class DemoCacheHappyPathTests(unittest.TestCase):
@@ -161,7 +157,7 @@ class DemoCache503Tests(unittest.TestCase):
 
     def test_invalid_itinerary_raises_503(self) -> None:
         # A real pydantic ValidationError from a wrong-shape itinerary cache → 503.
-        from spike_planner import ItineraryOutput
+        from backend.spike_planner import ItineraryOutput
 
         original = main._load_cached_itinerary
         main._load_cached_itinerary = lambda: ItineraryOutput.model_validate({"summary": 123})

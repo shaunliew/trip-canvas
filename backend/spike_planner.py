@@ -44,9 +44,9 @@ from pydantic import BaseModel, ConfigDict, Field
 load_dotenv(find_dotenv())
 
 from agents import Agent, ModelSettings, Runner, RunResult, WebSearchTool
-from spike_booking import BookingResult, book_trip
-from spike_e2e import is_placeholder_url
-from spike_weather import WeatherReport, get_weather
+from backend.spike_booking import BookingResult, book_trip
+from backend.spike_e2e import is_placeholder_url
+from backend.spike_weather import WeatherReport, get_weather
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
