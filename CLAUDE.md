@@ -98,22 +98,37 @@ NEXT_PUBLIC_BACKEND_URL    # defaults to http://localhost:8000
 
 ---
 
-## Project File Structure (ground truth — flat hackathon layout)
+## Project File Structure (ground truth — organized compatibility layout)
 
 ```
 tripcanvas/
 ├── pyproject.toml                  # PROJECT ROOT (not backend/)
 ├── backend/
-│   ├── main.py                     # FastAPI: /health /extract /itinerary
+│   ├── __init__.py                 # package marker; backend imports are package-qualified
+│   ├── main.py                     # FastAPI app construction, CORS, route declarations, service calls
+│   ├── api/
+│   │   ├── schemas.py              # FastAPI request/response models
+│   │   └── streaming.py            # SSE helpers, cache fallback, itinerary/hotel-base streams
+│   ├── planner/
+│   │   ├── models.py               # planner Pydantic/data models
+│   │   ├── hotel_options.py        # hotel-option shaping helpers
+│   │   ├── prompts.py              # planner prompt builders
+│   │   └── runner.py               # enricher, narrator_agent, validation, planner runtime
+│   ├── payments/
+│   │   ├── models.py               # AP2/x402 Pydantic models and exceptions
+│   │   ├── hotel_tool.py           # hotel payment tool loading
+│   │   ├── ap2.py                  # AP2 mandate signing/verification helpers
+│   │   ├── x402.py                 # x402 adapters
+│   │   └── service.py              # AgenticHotelPaymentService orchestration
+│   ├── spike_planner.py            # compatibility facade re-exporting planner.runner names
+│   ├── spike_agentic_payments.py   # compatibility facade re-exporting payments service/private helpers
 │   ├── spike.py                    # Phase 0 MCP smoke (not in serving path)
 │   ├── spike_places.py             # Phase 0.5 smoke (not in serving path)
 │   ├── spike_e2e.py                # ReelData, ExtractionResult, _scrape_reel, _extract_for_reel
 │   ├── spike_e2e_planner.py        # run_extraction + run_pipeline orchestrator
-│   ├── spike_planner.py            # enricher, narrator_agent, EnrichedContext, ItineraryOutput (+ hotel_options)
 │   ├── spike_weather.py            # weather_agent + fetch_weather (Open-Meteo)
 │   ├── spike_hotel_base.py         # hotel_base_agent: 3 hotel candidates + best pick (selected_hotel_id)
 │   ├── spike_booking.py            # booking_agent + deep-link composers + PaymentProvider seam (AP2/x402; Duffel deprecated)
-│   ├── lib/                        # placeholder package — leave empty (do NOT premature-modularize)
 │   └── data/                       # one JSON per purpose — no duplicate result files
 │       ├── places.json             # COMMITTED cache (extract fallback)
 │       ├── hotel_base_output.json  # COMMITTED cache (3 hotel candidates + best pick)
@@ -122,12 +137,16 @@ tripcanvas/
     ├── app/page.tsx                # routes to TripGenerationShell
     ├── app/trip/page.tsx           # same shell
     ├── components/map/TripMap.tsx
-    ├── components/trip/{TripGenerationShell,TripCanvasShell,RightTripPanel,PlaceIntelPanel,SelectedPlaceCard}.tsx
+    ├── components/trip/{TripGenerationShell,ReelInputPanel,GenerationTimeline,AgentDecisionRail,BookingFlowPanel}.tsx
+    ├── components/trip/{TripCanvasShell,RightTripPanel,PlaceIntelPanel,SelectedPlaceCard}.tsx
     ├── lib/trip/{backend-types,generate-trip,normalize-trip,sse,types,place-intel}.ts
+    ├── lib/trip/{generation-state,booking-flow,map-feature-collections,map-layers,map-runtime}.ts
     └── package.json                # mapbox-gl 3.24.0
 ```
 
-Earlier docs described `backend/lib/agents/{triage,research,hotels,transport,narrator}.py` and `backend/lib/extract/{apify_mcp,place_extractor,pipeline}.py`. THOSE FILES DO NOT EXIST. The spike layout above IS the layout — keep it flat for the hackathon.
+Legacy imports through `backend.spike_planner` and `backend.spike_agentic_payments` remain supported while the implementation lives in `backend/planner/` and `backend/payments/`. Keep public endpoint contracts, response schemas, and the SSE `result` then `[DONE]` termination contract stable when working across these facades.
+
+Earlier docs described `backend/lib/agents/{triage,research,hotels,transport,narrator}.py` and `backend/lib/extract/{apify_mcp,place_extractor,pipeline}.py`. THOSE FILES DO NOT EXIST. Use the organized package layout above, and do not reintroduce the old `backend/lib` placeholder.
 
 ---
 
@@ -418,7 +437,7 @@ Frontend `BackendExtractedPlace` mirrors this (snake_case) and does not consume 
 - yt-dlp or custom Instagram scraper (Apify only)
 - Custom agent orchestrator (use Agents SDK)
 - Instagram Graph API / OAuth
-- Splitting `enricher` into per-vertical files (flat layout is fine)
+- Broad rewrites beyond the current compatibility-facade layout; keep API/SSE contracts stable
 - Real booking checkout / real fulfillment / charging real money (booking is ALWAYS mock)
 - Production Duffel tokens or reviving Duffel as primary (it is a deprecated optional fallback)
 - Mainnet USDC / real-money x402 settlement this round (testnet only, and that's Zhi Hao's next round)

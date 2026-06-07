@@ -108,7 +108,11 @@ Backend capabilities:
   - `backend/data/places.json`
   - `backend/data/hotel_base_output.json`
   - `backend/data/planner_output.json`
-- AP2 + x402 payment seam in `backend/spike_agentic_payments.py`.
+- Organized implementation packages for API streaming, planner logic, and AP2 + x402 payments:
+  - `backend/api/`
+  - `backend/planner/`
+  - `backend/payments/`
+- Compatibility facades remain in `backend/spike_planner.py` and `backend/spike_agentic_payments.py`.
 
 The backend keeps the demo dependable by separating live agent work from replayable cache data. The cache path is not a separate product mode; it is an operational guardrail for noisy network, scraper, and LLM latency during a live demo.
 
@@ -194,7 +198,7 @@ NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 
 ## Verification
 
-Frontend checks:
+Frontend checks, from `frontend/`:
 
 ```bash
 cd frontend
@@ -203,10 +207,10 @@ npm run typecheck
 npm run build
 ```
 
-Backend checks:
+Backend checks, from the repo root:
 
 ```bash
-uv run pytest
+uv run pytest backend/tests -q
 ```
 
-The latest frontend implementation was verified with unit tests, TypeScript, production build, and browser checks against the backend cache flow.
+The latest implementation was verified with backend pytest, frontend unit tests, TypeScript, production build, and browser checks against the backend cache flow.
