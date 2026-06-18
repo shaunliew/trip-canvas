@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from dotenv import find_dotenv, load_dotenv
@@ -76,10 +77,21 @@ _HEARTBEAT_INTERVAL = _STREAMING_HEARTBEAT_INTERVAL
 
 app = FastAPI(title="TripCanvas Backend", version="0.1.0")
 
+
+def _cors_origins() -> list[str]:
+    default_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    configured = [
+        origin.strip().rstrip("/")
+        for origin in os.getenv("CORS_ALLOW_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    return [*default_origins, *configured]
+
+
 # CORS — Next.js dev server is on :3000 by default.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins(),
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_methods=["*"],
     allow_headers=["*"],

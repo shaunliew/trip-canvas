@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: tripcanvas-backend
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.3
+      - key: USE_CACHE
+        value: "true"
+      - key: CORS_ALLOW_ORIGINS
+        value: https://your-vercel-app.vercel.app
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: APIFY_TOKEN
+        sync: false
+      - key: AP2_MODE
+        value: disabled
+      - key: X402_MODE
+        value: simulation
+      - key: HOTEL_BOOKING_MODE
+        value: mock
+      - key: USE_MOCK_PAYMENT
+        value: "true"
